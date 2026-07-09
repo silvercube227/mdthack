@@ -2,3 +2,7 @@
 __pycache__/
 *.py[cod]
 .streamlit/secrets.toml
+
+# Runtime-generated live chart payload
+static/dbs_live.json
+static/.dbs_live.json.tmp

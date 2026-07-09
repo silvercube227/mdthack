@@ -1,213 +1,214 @@
-"""Canvas-based live charts (lightweight-charts) — payload embedded inline each tick."""
+"""Persistent live-chart iframe (uPlot).
+
+Rendered exactly once per page load (outside any ``run_every`` fragment) so the
+iframe is never re-mounted by Streamlit. It polls the static JSON payload on its
+own timer and updates each chart in place with ``uPlot.setData`` — a smooth,
+flicker-free scrolling view fully decoupled from Streamlit reruns.
+
+Rendering is defensive: every chart update is length-guarded and isolated so a
+single transient/ragged frame can never blank a chart or surface an error.
+"""
 
 from __future__ import annotations
 
-import json
-from typing import Any, Optional, Sequence
-
 import streamlit.components.v1 as components
 
-from frontend.plots import SCROLL_WINDOW_SEC, decimate_scroll_window
+from frontend.plots import LIVE_DATA_URL, SCROLL_WINDOW_SEC
 
-_CHART_HEIGHT = 1320
+_CHART_HEIGHT = 1080
 
-
-def _series_points(t: Sequence[float], y: Sequence[float]) -> list[dict[str, float]]:
-    return [{"time": float(tv), "value": float(yv)} for tv, yv in zip(t, y) if yv is not None]
-
-
-def build_live_chart_payload(
-    history: dict,
-    comparison_history: dict,
-    intervention_time_sec: Optional[float] = None,
-    reset: bool = False,
-) -> dict[str, Any]:
-    from frontend.debug_log import debug_log
-
-    t, lfp = decimate_scroll_window(history["time_sec"], history["stn_lfp_uv"])
-    _, lb, hb, thr = decimate_scroll_window(
-        history["time_sec"],
-        history["pathological_beta_power"],
-        history["high_beta_power"],
-        history["beta_detection_threshold"],
-    )
-    _, burst = decimate_scroll_window(history["time_sec"], history["low_beta_burst_duration_ms"])
-    _, dbs = decimate_scroll_window(history["time_sec"], history["dbs_amplitude_ma"])
-
-    comp: dict[str, dict[str, list]] = {}
-    for label in ("No DBS", "Fixed DBS", "Closed-Loop DBS"):
-        hist = comparison_history[label]
-        ct, symptom, energy = decimate_scroll_window(
-            hist["time_sec"],
-            hist["cumulative_patient_symptom_burden"],
-            hist["cumulative_total_energy_delivered"],
-        )
-        comp[label] = {
-            "t": ct,
-            "symptom": _series_points(ct, symptom),
-            "energy": _series_points(ct, energy),
-        }
-
-    lfp_points = _series_points(t, lfp)
-    # #region agent log
-    debug_log(
-        "live_charts.py:build_live_chart_payload",
-        "chart_payload_built",
-        {
-            "n_lfp_points": len(lfp_points),
-            "intervention_time_sec": intervention_time_sec,
-            "reset": reset,
-        },
-        hypothesis_id="G",
-        run_id="post-fix-v2",
-    )
-    # #endregion
-
-    return {
-        "reset": reset,
-        "windowSec": SCROLL_WINDOW_SEC,
-        "interventionTime": intervention_time_sec,
-        "t": t,
-        "lfp": lfp_points,
-        "lb": _series_points(t, lb),
-        "hb": _series_points(t, hb),
-        "threshold": _series_points(t, thr),
-        "burst": _series_points(t, burst),
-        "dbs": _series_points(t, dbs),
-        "comparison": comp,
-        "refs": {"offLb": 8.43, "therapeuticLb": 2.11, "burstOff": 579, "burstOn": 359},
-    }
-
-
-_CHART_HTML = r"""
+_HTML = r"""
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8"/>
-<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<meta name="color-scheme" content="light only"/>
+<link rel="stylesheet" href="https://unpkg.com/uplot@1.6.31/dist/uPlot.min.css"/>
+<script src="https://unpkg.com/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #0e1117; color: #9ba7b8; font-family: Inter, Segoe UI, sans-serif; }
-  .panel { margin: 0 0 10px 0; border: 1px solid #2a3142; border-radius: 8px; overflow: hidden; background: #161b26; }
-  .title { font-size: 12px; color: #c9d1d9; padding: 8px 12px 4px; }
-  .chart { width: 100%; height: 180px; }
-  .chart.tall { height: 200px; }
-  .chart.short { height: 160px; }
+  :root { color-scheme: light only; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #F4F6FB; color: #1B1B2F;
+               font-family: Inter, 'Segoe UI', Roboto, sans-serif; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 1px; }
+  .card { background: #FFFFFF; border: 1px solid #E1E6EF; border-radius: 12px;
+          padding: 10px 12px 6px; box-shadow: 0 1px 3px rgba(23,15,95,0.04); }
+  .card.wide { grid-column: 1 / -1; }
+  .card h3 { margin: 0 0 6px 0; font-size: 13px; font-weight: 600; color: #170F5F; }
+  .chart { width: 100%; }
+  .u-legend { font-size: 11px; color: #4A5261; }
+  .u-legend .u-marker { width: 10px; height: 10px; }
+  #fatal { display: none; color: #C8102E; font-size: 13px; padding: 12px; }
 </style>
 </head>
 <body>
-<div id="p-lfp" class="panel"><div class="title">STN LFP — Raw Local Field Potential</div><div id="c-lfp" class="chart tall"></div></div>
-<div id="p-beta" class="panel"><div class="title">Pathological Beta Band Power (% Total Spectral Power)</div><div id="c-beta" class="chart"></div></div>
-<div id="p-burst" class="panel"><div class="title">Low-Beta Burst Duration</div><div id="c-burst" class="chart short"></div></div>
-<div id="p-dbs" class="panel"><div class="title">DBS Amplitude (mA)</div><div id="c-dbs" class="chart short"></div></div>
-<div id="p-eff" class="panel"><div class="title">Cumulative Symptom Burden — grey (No DBS) should stay on top</div><div id="c-eff" class="chart short"></div></div>
-<div id="p-teed" class="panel"><div class="title">Total Energy Delivered (TEED proxy)</div><div id="c-teed" class="chart short"></div></div>
+<div id="fatal"></div>
+<div class="grid">
+  <div class="card wide"><h3>STN Local Field Potential (raw µV)</h3><div id="c-stn" class="chart"></div></div>
+  <div class="card wide"><h3>Pathological Beta Power (% total spectral power)</h3><div id="c-beta" class="chart"></div></div>
+  <div class="card"><h3>DBS Amplitude — controller output (mA)</h3><div id="c-dbs" class="chart"></div></div>
+  <div class="card"><h3>Low-Beta Burst Duration (ms)</h3><div id="c-burst" class="chart"></div></div>
+  <div class="card"><h3>Cumulative Symptom Burden — lower is better</h3><div id="c-sym" class="chart"></div></div>
+  <div class="card"><h3>Total Energy Delivered — lower is better</h3><div id="c-teed" class="chart"></div></div>
+</div>
 <script>
-const PAYLOAD = __PAYLOAD__;
-
-const theme = {
-  layout: { background: { color: "#161b26" }, textColor: "#9ba7b8" },
-  grid: { vertLines: { color: "#2a3142" }, horLines: { color: "#2a3142" } },
-  timeScale: { timeVisible: true, secondsVisible: true, borderColor: "#3d4659" },
-  rightPriceScale: { borderColor: "#3d4659" },
+const DATA_URL = "__DATA_URL__";
+const WINDOW = __WINDOW__;
+const C = {
+  cobalt:"#0077C8", red:"#C8102E", purple:"#6B4EFF", amber:"#E8A33D",
+  green:"#00843D", gray:"#9AA5B4", muted:"#5F6876", slate:"#4A5261",
+  grid:"#EDF0F6", border:"#E1E6EF", ink:"#1B1B2F",
 };
 
-function makeChart(el, opts = {}) {
-  const chart = LightweightCharts.createChart(el, {
-    ...theme,
-    width: el.clientWidth,
-    height: el.clientHeight,
-    ...opts,
-  });
-  const ro = new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth, height: el.clientHeight }));
-  ro.observe(el);
-  return chart;
+let intervention = null;
+let refs = { offLb: 8.43, therLb: 2.11, burstOff: 579, burstOn: 359, maxMa: 3.5 };
+
+/* ---- plugins ------------------------------------------------------------- */
+function vLinePlugin() {
+  return { hooks: { draw: u => {
+    if (intervention == null) return;
+    const xr = u.scales.x.range(u, u.scales.x.min, u.scales.x.max);
+    if (intervention < xr[0] || intervention > xr[1]) return;
+    const x = Math.round(u.valToPos(intervention, "x", true));
+    const ctx = u.ctx;
+    ctx.save();
+    ctx.strokeStyle = C.cobalt; ctx.lineWidth = 1.5; ctx.setLineDash([5,4]);
+    ctx.beginPath(); ctx.moveTo(x, u.bbox.top); ctx.lineTo(x, u.bbox.top + u.bbox.height); ctx.stroke();
+    ctx.restore();
+  }}};
+}
+function hLinePlugin(getLines) {
+  return { hooks: { draw: u => {
+    const ctx = u.ctx;
+    for (const ln of getLines()) {
+      const y = Math.round(u.valToPos(ln.y, "y", true));
+      if (y < u.bbox.top || y > u.bbox.top + u.bbox.height) continue;
+      ctx.save();
+      ctx.strokeStyle = ln.color; ctx.lineWidth = 1; ctx.setLineDash([2,3]);
+      ctx.beginPath(); ctx.moveTo(u.bbox.left, y); ctx.lineTo(u.bbox.left + u.bbox.width, y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = ln.color; ctx.font = "10px Inter, sans-serif";
+      ctx.textBaseline = "bottom"; ctx.textAlign = "right";
+      ctx.fillText(ln.label, u.bbox.left + u.bbox.width - 4, y - 2);
+      ctx.restore();
+    }
+  }}};
 }
 
-function lineSeries(chart, color, opts = {}) {
-  return chart.addLineSeries({
-    color,
-    lineWidth: 2,
-    priceLineVisible: false,
-    lastValueVisible: false,
-    crosshairMarkerRadius: 3,
-    ...opts,
-  });
+/* ---- chart factory ------------------------------------------------------- */
+function xScale() {
+  return { time: false, range: (u, min, max) => {
+    if (max == null || max <= WINDOW) return [0, WINDOW];
+    return [max - WINDOW, max];
+  }};
+}
+function axes(yLabel) {
+  const base = { stroke: C.slate, grid: { stroke: C.grid, width: 1 },
+                 ticks: { stroke: C.border, width: 1 }, font: "11px Inter, sans-serif" };
+  return [
+    { ...base, values: (u, vs) => vs.map(v => v.toFixed(0)) },
+    { ...base, label: yLabel, labelFont: "11px Inter, sans-serif", labelSize: 30, size: 52 },
+  ];
+}
+function serie(label, color, opts = {}) {
+  return { label, stroke: color, width: opts.width || 2, dash: opts.dash, points: { show: false },
+           value: (u, v) => v == null ? "--" : v.toFixed(opts.dp == null ? 2 : opts.dp) };
+}
+function make(elId, series, yLabel, plugins, yRange, legend) {
+  const el = document.getElementById(elId);
+  const h = elId === "c-stn" ? 180 : (elId === "c-beta" ? 205
+          : (elId === "c-sym" || elId === "c-teed" ? 205 : 175));
+  const opts = {
+    width: el.clientWidth || 600, height: h,
+    legend: { show: !!legend },
+    cursor: { drag: { x: false, y: false }, points: { show: false }, y: false },
+    scales: { x: xScale(), y: yRange ? { range: () => yRange } : {} },
+    axes: axes(yLabel),
+    series: [{}].concat(series),
+    plugins: plugins || [],
+  };
+  const u = new uPlot(opts, [[]].concat(series.map(() => [])), el);
+  new ResizeObserver(() => u.setSize({ width: el.clientWidth || 600, height: h })).observe(el);
+  return u;
 }
 
-function interventionMarkers(tInt) {
-  if (tInt == null) return [];
-  return [{ time: tInt, position: "aboveBar", color: "#f0883e", shape: "arrowDown", text: "Intervention" }];
+/* Length-guarded, isolated update — a ragged/transient frame is skipped, never thrown. */
+function safeSet(u, data) {
+  if (!u || !data || !data[0]) return;
+  const L = data[0].length;
+  for (let i = 1; i < data.length; i++) {
+    if (!Array.isArray(data[i]) || data[i].length !== L) return;
+  }
+  try { u.setData(data); } catch (e) { /* skip this frame */ }
 }
 
-function scrollChart(chart, tArr, windowSec) {
-  if (!tArr || !tArr.length) return;
-  const tMax = tArr[tArr.length - 1];
-  const tMin = Math.max(0, tMax - windowSec);
-  chart.timeScale().setVisibleRange({ from: tMin, to: Math.max(tMax + 0.05, windowSec) });
+/* ---- build charts once --------------------------------------------------- */
+let cStn, cBeta, cDbs, cBurst, cSym, cTeed;
+function buildCharts() {
+  cStn = make("c-stn", [serie("STN LFP", C.cobalt, { width: 1.4 })], "µV",
+    [vLinePlugin()], [-38, 38], false);
+
+  cBeta = make("c-beta",
+    [serie("Low-beta 13–20 Hz", C.red, { width: 2.2 }),
+     serie("High-beta 20–35 Hz", C.purple, { width: 1.6 }),
+     serie("Threshold", C.amber, { width: 1.6, dash: [6,4] })],
+    "% total",
+    [vLinePlugin(), hLinePlugin(() => [
+       { y: refs.offLb, color: C.muted, label: "OFF ref 8.4%" },
+       { y: refs.therLb, color: C.green, label: "Therapeutic 2.1%" }])],
+    [0, 36], true);
+
+  cDbs = make("c-dbs", [serie("DBS mA", C.green, { width: 2 })], "mA",
+    [vLinePlugin()], [0, refs.maxMa * 1.05], false);
+
+  cBurst = make("c-burst", [serie("Burst ms", C.amber, { width: 2, dp: 0 })], "ms",
+    [vLinePlugin(), hLinePlugin(() => [
+       { y: refs.burstOff, color: C.muted, label: "OFF 579 ms" },
+       { y: refs.burstOn, color: C.green, label: "ON 359 ms" }])],
+    null, false);
+
+  const comp = () => [
+    serie("No DBS", C.gray, { width: 2, dash: [4,4], dp: 0 }),
+    serie("Fixed DBS", C.purple, { width: 2, dp: 0 }),
+    serie("Closed-Loop DBS", C.cobalt, { width: 3, dp: 0 }),
+  ];
+  cSym = make("c-sym", comp(), "ms·s", [vLinePlugin()], null, true);
+  cTeed = make("c-teed", comp(), "mA²·s", [vLinePlugin()], null, true);
+}
+
+/* ---- polling loop -------------------------------------------------------- */
+async function poll() {
+  let d;
+  try {
+    const res = await fetch(DATA_URL + "?t=" + Date.now(), { cache: "no-store" });
+    if (!res.ok) return;
+    d = await res.json();
+  } catch (e) { return; }               // transient network/parse — keep last good frame
+  if (!d || !d.t) return;
+
+  refs = d.refs || refs;
+  intervention = d.intervention;
+
+  safeSet(cStn,  [d.t, d.stn]);
+  safeSet(cBeta, [d.t, d.lb, d.hb, d.thr]);
+  safeSet(cDbs,  [d.t, d.dbs]);
+  safeSet(cBurst,[d.t, d.burst]);
+  const ct = d.comp && d.comp.t, sy = d.comp && d.comp.symptom, en = d.comp && d.comp.energy;
+  if (ct && sy) safeSet(cSym,  [ct, sy["No DBS"], sy["Fixed DBS"], sy["Closed-Loop DBS"]]);
+  if (ct && en) safeSet(cTeed, [ct, en["No DBS"], en["Fixed DBS"], en["Closed-Loop DBS"]]);
 }
 
 function boot() {
-  try {
-    if (typeof LightweightCharts === "undefined") {
-      throw new Error("lightweight-charts failed to load");
-    }
-    const refs = PAYLOAD.refs;
-    const markers = interventionMarkers(PAYLOAD.interventionTime);
-
-    const lfpChart = makeChart(document.getElementById("c-lfp"));
-    const lfpSeries = lineSeries(lfpChart, "#58a6ff", { lineWidth: 1.5 });
-    lfpSeries.setData(PAYLOAD.lfp || []);
-    lfpSeries.setMarkers(markers);
-    scrollChart(lfpChart, PAYLOAD.t, PAYLOAD.windowSec);
-
-    const betaChart = makeChart(document.getElementById("c-beta"));
-    const lb = lineSeries(betaChart, "#f78166");
-    const hb = lineSeries(betaChart, "#d2a8ff", { lineWidth: 1.5 });
-    const thr = lineSeries(betaChart, "#ffa657", { lineWidth: 1.5, lineStyle: 2 });
-    lb.createPriceLine({ price: refs.offLb, color: "#8b949e", lineWidth: 1, lineStyle: 2, title: "OFF 8.4%" });
-    lb.createPriceLine({ price: refs.therapeuticLb, color: "#3fb950", lineWidth: 1, lineStyle: 2, title: "Ther 2.1%" });
-    lb.setData(PAYLOAD.lb || []);
-    hb.setData(PAYLOAD.hb || []);
-    thr.setData(PAYLOAD.threshold || []);
-    scrollChart(betaChart, PAYLOAD.t, PAYLOAD.windowSec);
-
-    const burstChart = makeChart(document.getElementById("c-burst"));
-    const burstSeries = lineSeries(burstChart, "#ffa657");
-    burstSeries.createPriceLine({ price: refs.burstOff, color: "#8b949e", lineWidth: 1, lineStyle: 2, title: "OFF 579ms" });
-    burstSeries.createPriceLine({ price: refs.burstOn, color: "#3fb950", lineWidth: 1, lineStyle: 2, title: "ON 359ms" });
-    burstSeries.setData(PAYLOAD.burst || []);
-    burstSeries.setMarkers(markers);
-    scrollChart(burstChart, PAYLOAD.t, PAYLOAD.windowSec);
-
-    const dbsChart = makeChart(document.getElementById("c-dbs"));
-    const dbsSeries = lineSeries(dbsChart, "#3fb950");
-    dbsSeries.setData(PAYLOAD.dbs || []);
-    dbsSeries.setMarkers(markers);
-    scrollChart(dbsChart, PAYLOAD.t, PAYLOAD.windowSec);
-
-    const effChart = makeChart(document.getElementById("c-eff"), { height: 160 });
-    const comp = PAYLOAD.comparison || {};
-    lineSeries(effChart, "#8b949e", { lineWidth: 2.5 }).setData(comp["No DBS"]?.symptom || []);
-    lineSeries(effChart, "#d2a8ff", { lineWidth: 2.5 }).setData(comp["Fixed DBS"]?.symptom || []);
-    lineSeries(effChart, "#3fb950", { lineWidth: 2.5 }).setData(comp["Closed-Loop DBS"]?.symptom || []);
-    scrollChart(effChart, PAYLOAD.t, PAYLOAD.windowSec);
-
-    const teedChart = makeChart(document.getElementById("c-teed"), { height: 160 });
-    lineSeries(teedChart, "#8b949e", { lineWidth: 2.5 }).setData(comp["No DBS"]?.energy || []);
-    lineSeries(teedChart, "#d2a8ff", { lineWidth: 2.5 }).setData(comp["Fixed DBS"]?.energy || []);
-    lineSeries(teedChart, "#3fb950", { lineWidth: 2.5 }).setData(comp["Closed-Loop DBS"]?.energy || []);
-    scrollChart(teedChart, PAYLOAD.t, PAYLOAD.windowSec);
-
-    // #region agent log
-    fetch('http://127.0.0.1:7538/ingest/bd5338f9-16af-480f-b848-3ec5469ef828',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7f5275'},body:JSON.stringify({sessionId:'7f5275',location:'live_charts.html:boot',message:'chart_render_ok',data:{nLfp:(PAYLOAD.lfp||[]).length,intervention:PAYLOAD.interventionTime},timestamp:Date.now(),hypothesisId:'G',runId:'post-fix-v2'})}).catch(()=>{});
-    // #endregion
-  } catch (err) {
-    document.body.innerHTML = '<pre style="color:#f85149;padding:12px;">Chart error: ' + err + '</pre>';
-    fetch('http://127.0.0.1:7538/ingest/bd5338f9-16af-480f-b848-3ec5469ef828',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7f5275'},body:JSON.stringify({sessionId:'7f5275',location:'live_charts.html:boot',message:'chart_render_error',data:{error:String(err)},timestamp:Date.now(),hypothesisId:'G',runId:'post-fix-v2'})}).catch(()=>{});
+  if (typeof uPlot === "undefined") {
+    const f = document.getElementById("fatal");
+    f.textContent = "Charts failed to load (uPlot unavailable). Check your network connection.";
+    f.style.display = "block";
+    return;
   }
+  buildCharts();
+  poll();
+  setInterval(poll, 200);
 }
-
 boot();
 </script>
 </body>
@@ -215,18 +216,6 @@ boot();
 """
 
 
-def render_live_charts(
-    history: dict,
-    comparison_history: dict,
-    intervention_time_sec: Optional[float] = None,
-    *,
-    reset: bool = False,
-) -> None:
-    payload = build_live_chart_payload(
-        history,
-        comparison_history,
-        intervention_time_sec=intervention_time_sec,
-        reset=reset,
-    )
-    html = _CHART_HTML.replace("__PAYLOAD__", json.dumps(payload))
+def render_persistent_charts() -> None:
+    html = _HTML.replace("__DATA_URL__", LIVE_DATA_URL).replace("__WINDOW__", str(SCROLL_WINDOW_SEC))
     components.html(html, height=_CHART_HEIGHT, scrolling=False)

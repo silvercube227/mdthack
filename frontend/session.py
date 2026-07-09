@@ -21,8 +21,6 @@ from backend.constants import DBSControlMode
 from backend.controller import ControllerLimits
 from backend.simulation import SimulationRunner
 from backend.therapy_recommendation import RecommendedTherapyParameters
-from frontend.live_charts import render_live_charts
-from frontend.debug_log import debug_log
 
 
 def _init_control_defaults() -> None:
@@ -59,19 +57,7 @@ def reset_simulation() -> None:
     st.session_state["intervention_label"] = None
     st.session_state["_last_control_mode_label"] = DBSControlMode.NONE.value
     st.session_state.pop("_mark_intervention_on_next_run", None)
-    st.session_state["_charts_need_reset"] = True
     get_runner().reset_comparison_arms()
-
-
-def refresh_live_charts(history, comparison_history) -> None:
-    intervention_time_sec, _ = get_intervention_marker()
-    reset = st.session_state.pop("_charts_need_reset", False)
-    render_live_charts(
-        history,
-        comparison_history,
-        intervention_time_sec=intervention_time_sec,
-        reset=reset,
-    )
 
 
 def get_intervention_marker() -> tuple[float | None, str | None]:
@@ -95,19 +81,6 @@ def _sync_intervention_marker(control_mode: DBSControlMode) -> None:
 
     if prev_label == DBSControlMode.NONE.value and current_label != DBSControlMode.NONE.value:
         _mark_intervention_start(current_label)
-        # #region agent log
-        debug_log(
-            "session.py:_sync_intervention_marker",
-            "intervention_marked",
-            {
-                "prev_label": prev_label,
-                "current_label": current_label,
-                "intervention_time_sec": st.session_state.get("intervention_start_time_sec"),
-                "sim_time_sec": get_runner().sim_time_sec,
-            },
-            hypothesis_id="D",
-        )
-        # #endregion
     elif current_label == DBSControlMode.NONE.value:
         st.session_state["intervention_start_time_sec"] = None
         st.session_state["intervention_label"] = None
@@ -156,93 +129,122 @@ def _apply_pending_therapy_recommendation() -> None:
         _mark_intervention_start(mode_label)
 
 
+def _render_device_connection() -> None:
+    """Placeholder Bluetooth pairing UI — not wired to any hardware yet."""
+    st.session_state.setdefault("bt_device_connected", False)
+    connected = st.session_state["bt_device_connected"]
+
+    with st.container(border=True):
+        st.markdown("**Device Connection**")
+        if connected:
+            st.success("Percept\u2122 PC · Simulated")
+        else:
+            st.caption("No implant paired · running in simulation mode")
+        if st.button("Connect Bluetooth Device", use_container_width=True, key="bt_connect_btn"):
+            st.toast(
+                "Bluetooth pairing isn't implemented in this build — placeholder for future hardware integration.",
+            )
+
+
 def render_sidebar() -> tuple:
     _init_control_defaults()
     _apply_pending_therapy_recommendation()
-    st.sidebar.header("Neuromodulation Control Panel")
 
-    control_mode_label = st.sidebar.selectbox(
-        "DBS Control Mode",
-        options=[m.value for m in DBSControlMode],
-        key="dbs_control_mode_label",
-        help="Open-loop baseline, fixed cDBS, or ADAPT-PD Single/Dual Threshold aDBS.",
-    )
-    control_mode = DBSControlMode(control_mode_label)
+    with st.sidebar:
+        st.markdown("### Control Panel")
+        st.caption("Neuromodulation therapy settings")
 
-    dopaminergic_label = st.sidebar.selectbox(
-        "Dopaminergic State",
-        options=[s.value for s in DopaminergicState],
-        key="dopaminergic_state_label",
-        help="OFF = withdrawn levodopa (pathological Beta elevated). ON = medicated state.",
-    )
-    dopaminergic_state = DopaminergicState(dopaminergic_label)
+        _render_device_connection()
 
-    st.sidebar.markdown("**LFP Power Thresholds (% total power, 8–30 Hz band)**")
-    lfp_threshold_pct = st.sidebar.slider(
-        "Single-Threshold LFP Power (ST-aDBS)",
-        min_value=1.0,
-        max_value=12.0,
-        step=0.1,
-        key="lfp_threshold_pct",
-        help=f"Literature OFF LB reference: {LB_POWER_OFF_PCT:.1f}%; therapeutic: {LB_POWER_THERAPEUTIC_PCT:.1f}%.",
-    )
-    lfp_upper_threshold_pct = st.sidebar.slider(
-        "Dual-Threshold Upper LFP Power",
-        min_value=2.0,
-        max_value=14.0,
-        step=0.1,
-        key="lfp_upper_threshold_pct",
-    )
-    lfp_lower_threshold_pct = st.sidebar.slider(
-        "Dual-Threshold Lower LFP Power",
-        min_value=0.5,
-        max_value=8.0,
-        step=0.1,
-        key="lfp_lower_threshold_pct",
-    )
+        st.markdown("#### Therapy Mode")
+        control_mode_label = st.selectbox(
+            "DBS Control Mode",
+            options=[m.value for m in DBSControlMode],
+            key="dbs_control_mode_label",
+            help="Open-loop baseline, fixed cDBS, or ADAPT-PD Single/Dual Threshold aDBS.",
+        )
+        control_mode = DBSControlMode(control_mode_label)
 
-    st.sidebar.markdown("**Stimulation Amplitude Limits (mA)**")
-    lower_stim_ma = st.sidebar.slider(
-        "Lower Stim Limit (mA)",
-        min_value=0.5,
-        max_value=2.5,
-        step=0.1,
-        key="lower_stim_ma",
-        help="ADAPT-PD: never zero — sub-therapeutic rebound prevention.",
-    )
-    upper_stim_ma = st.sidebar.slider(
-        "Upper Stim Limit (mA)",
-        min_value=1.5,
-        max_value=3.5,
-        step=0.1,
-        key="upper_stim_ma",
-    )
+        dopaminergic_label = st.selectbox(
+            "Dopaminergic State",
+            options=[s.value for s in DopaminergicState],
+            key="dopaminergic_state_label",
+            help="OFF = withdrawn levodopa (pathological Beta elevated). ON = medicated state.",
+        )
+        dopaminergic_state = DopaminergicState(dopaminergic_label)
 
-    symptom_severity_scale = st.sidebar.slider(
-        "Base Symptom Severity",
-        min_value=0.5,
-        max_value=1.5,
-        step=0.05,
-        key="symptom_severity_scale",
-        help="Scales OFF-state burst duration around literature mean (579 ms).",
-    )
+        st.divider()
+        st.markdown("#### LFP Power Thresholds")
+        st.caption("% of total power, 8–30 Hz sense band")
+        lfp_threshold_pct = st.slider(
+            "Single-Threshold LFP Power (ST-aDBS)",
+            min_value=1.0,
+            max_value=12.0,
+            step=0.1,
+            key="lfp_threshold_pct",
+            help=f"Literature OFF LB reference: {LB_POWER_OFF_PCT:.1f}%; therapeutic: {LB_POWER_THERAPEUTIC_PCT:.1f}%.",
+        )
+        lfp_upper_threshold_pct = st.slider(
+            "Dual-Threshold Upper LFP Power",
+            min_value=2.0,
+            max_value=14.0,
+            step=0.1,
+            key="lfp_upper_threshold_pct",
+        )
+        lfp_lower_threshold_pct = st.slider(
+            "Dual-Threshold Lower LFP Power",
+            min_value=0.5,
+            max_value=8.0,
+            step=0.1,
+            key="lfp_lower_threshold_pct",
+        )
 
-    col_a, col_b = st.sidebar.columns(2)
-    with col_a:
-        if st.button("Reset to Baseline (None)", use_container_width=True):
-            reset_simulation()
-            st.rerun()
-    with col_b:
-        paused = st.toggle("Pause", value=False)
+        st.divider()
+        st.markdown("#### Stimulation Amplitude Limits")
+        st.caption("Milliamps (mA)")
+        lower_stim_ma = st.slider(
+            "Lower Stim Limit (mA)",
+            min_value=0.5,
+            max_value=2.5,
+            step=0.1,
+            key="lower_stim_ma",
+            help="ADAPT-PD: never zero — sub-therapeutic rebound prevention.",
+        )
+        upper_stim_ma = st.slider(
+            "Upper Stim Limit (mA)",
+            min_value=1.5,
+            max_value=3.5,
+            step=0.1,
+            key="upper_stim_ma",
+        )
 
-    _sync_intervention_marker(control_mode)
+        st.divider()
+        st.markdown("#### Simulation")
+        symptom_severity_scale = st.slider(
+            "Base Symptom Severity",
+            min_value=0.5,
+            max_value=1.5,
+            step=0.05,
+            key="symptom_severity_scale",
+            help="Scales OFF-state burst duration around literature mean (579 ms).",
+        )
 
-    st.sidebar.markdown("---")
-    st.sidebar.caption(
-        f"Percept sampling: **{SAMPLE_RATE_HZ} Hz** · Window: **{DETECTION_WINDOW_MS} ms** · "
-        f"Sense band: **{ADAPT_PD_SENSE_LOW_HZ:.0f}–{ADAPT_PD_SENSE_HIGH_HZ:.0f} Hz** · "
-        f"Beta: **{BETA_TOTAL_LOW_HZ:.0f}–{BETA_TOTAL_HIGH_HZ:.0f} Hz**"
-    )
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("Reset", use_container_width=True, help="Reset to open-loop baseline (None)"):
+                reset_simulation()
+                st.rerun()
+        with col_b:
+            paused = st.toggle("Pause", value=False)
+
+        _sync_intervention_marker(control_mode)
+
+        st.divider()
+        st.caption(
+            f"Percept sampling: **{SAMPLE_RATE_HZ} Hz** · Window: **{DETECTION_WINDOW_MS} ms** · "
+            f"Sense band: **{ADAPT_PD_SENSE_LOW_HZ:.0f}–{ADAPT_PD_SENSE_HIGH_HZ:.0f} Hz** · "
+            f"Beta: **{BETA_TOTAL_LOW_HZ:.0f}–{BETA_TOTAL_HIGH_HZ:.0f} Hz**"
+        )
 
     return (
         control_mode,
