@@ -10,6 +10,7 @@ from backend.clinical_parameters import (
     DT_RAMP_DOWN_SEC,
     DT_RAMP_UP_SEC,
     FIXED_CDBS_MA,
+    STIM_FREQUENCY_HZ,
     ST_RAMP_MS,
 )
 from backend.constants import DBSControlMode, MAX_STIM_MA
@@ -22,6 +23,7 @@ class ControllerLimits:
     lfp_threshold_pct: float = 4.0
     lfp_upper_threshold_pct: float = 6.0
     lfp_lower_threshold_pct: float = 2.5
+    stim_frequency_hz: float = STIM_FREQUENCY_HZ
 
 
 class DBSControllerLayer:
@@ -92,6 +94,12 @@ class DBSControllerLayer:
         return self.current_amplitude_ma
 
 
-def compute_teed_increment(amplitude_ma: float, dt_sec: float) -> float:
-    """Simplified TEED proxy: amplitude squared × time (µJ relative scale)."""
-    return float(amplitude_ma**2 * dt_sec)
+def compute_teed_increment(
+    amplitude_ma: float,
+    dt_sec: float,
+    frequency_hz: float = STIM_FREQUENCY_HZ,
+) -> float:
+    """TEED proxy: I² × f × dt, normalized to 130 Hz (ADAPT-PD energy endpoint)."""
+    if amplitude_ma <= 0.0:
+        return 0.0
+    return float(amplitude_ma**2 * dt_sec * frequency_hz / STIM_FREQUENCY_HZ)

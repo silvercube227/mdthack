@@ -89,7 +89,12 @@ class SimulatedSTNBrain:
         return pink * 2.8
 
     def _update_suppression_from_dbs(self, prior_dbs_amplitude_ma: float) -> None:
-        self.lb_power_scale = beta_amplitude_scale_from_stim_ma(prior_dbs_amplitude_ma)
+        old_scale = self.lb_power_scale
+        new_scale = beta_amplitude_scale_from_stim_ma(prior_dbs_amplitude_ma)
+        self.lb_power_scale = new_scale
+        if self.burst_active and new_scale < old_scale - 1e-6:
+            ratio = new_scale / max(old_scale, 1e-6)
+            self.burst_samples_remaining = max(int(self.burst_samples_remaining * ratio), 1)
 
     def generate_stn_lfp_sample(self, prior_dbs_amplitude_ma: float) -> float:
         """Produce one STN LFP sample (µV) with burst-modulated LB/HB components."""

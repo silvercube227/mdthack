@@ -21,13 +21,17 @@ from backend.signal_cleaning import PathologicalBetaExtractor
 from backend.signal_generator import SimulatedSTNBrain
 
 
-def _dbg_sim(location: str, msg: str, data: dict, hypothesis_id: str) -> None:
-    try:
-        from frontend.debug_log import debug_log
-
-        debug_log(location, msg, data, hypothesis_id=hypothesis_id)
-    except ImportError:
-        pass
+def _display_burst_duration_ms(
+    brain: SimulatedSTNBrain,
+    extractor: PathologicalBetaExtractor,
+) -> float:
+    """
+    Burst duration for charts: literature-scaled expected length during active
+    generator bursts (responds to DBS), else envelope-detected duration.
+    """
+    if brain.burst_active:
+        return brain._mean_burst_duration_ms()
+    return extractor.low_beta_burst_duration_ms
 
 
 @dataclass
@@ -116,6 +120,7 @@ class SimulationRunner:
             "high_beta_power": deque(maxlen=max_samples),
             "low_beta_burst_duration_ms": deque(maxlen=max_samples),
             "dbs_amplitude_ma": deque(maxlen=max_samples),
+            "dbs_frequency_hz": deque(maxlen=max_samples),
             "beta_detection_threshold": deque(maxlen=max_samples),
         }
 
@@ -179,13 +184,12 @@ class SimulationRunner:
         )
         lb_power_pct = _effective_lb_power_pct(measured_lb, dbs_amplitude)
 
-        if arm.brain.burst_active:
-            burst_ms = 1000.0 * arm.brain.burst_samples_remaining / arm.brain.sample_rate_hz
-        else:
-            burst_ms = 0.0
+        burst_ms = _display_burst_duration_ms(arm.brain, arm.extractor)
 
         arm.cumulative_patient_symptom_burden += self._symptom_increment(burst_ms, lb_power_pct, dt_sec)
-        arm.cumulative_teed += compute_teed_increment(dbs_amplitude, dt_sec)
+        arm.cumulative_teed += compute_teed_increment(
+            dbs_amplitude, dt_sec, limits.stim_frequency_hz
+        )
         arm.prior_dbs_amplitude_ma = dbs_amplitude
 
     def advance(
@@ -221,12 +225,10 @@ class SimulationRunner:
             self.history["stn_lfp_uv"].append(stn_lfp)
             self.history["pathological_beta_power"].append(lb_power_pct)
             self.history["high_beta_power"].append(self.main_extractor.high_beta_power_pct)
-            self.history["low_beta_burst_duration_ms"].append(
-                1000.0 * self.main_brain.burst_samples_remaining / self.main_brain.sample_rate_hz
-                if self.main_brain.burst_active
-                else 0.0
-            )
+            burst_ms = _display_burst_duration_ms(self.main_brain, self.main_extractor)
+            self.history["low_beta_burst_duration_ms"].append(burst_ms)
             self.history["dbs_amplitude_ma"].append(dbs_amplitude_ma)
+            self.history["dbs_frequency_hz"].append(limits.stim_frequency_hz)
             self.history["beta_detection_threshold"].append(limits.lfp_threshold_pct)
 
             self.prior_dbs_amplitude_ma = dbs_amplitude_ma
@@ -247,25 +249,3 @@ class SimulationRunner:
                 comp_hist["cumulative_patient_symptom_burden"].append(arm.cumulative_patient_symptom_burden)
                 comp_hist["cumulative_total_energy_delivered"].append(arm.cumulative_teed)
 
-        if self.sim_time_sec % 1.0 < dt_sec * TICKS_PER_FRAME:
-            # #region agent log
-            _dbg_sim(
-                "simulation.py:advance",
-                "comparison_arm_snapshot",
-                {
-                    "sim_time_sec": round(self.sim_time_sec, 2),
-                    "intervention_time_sec": intervention_time_sec,
-                    "user_control_mode": control_mode.value,
-                    "main_dbs_ma": round(self.prior_dbs_amplitude_ma, 3),
-                    "main_lb_scale": round(self.main_brain.lb_power_scale, 3),
-                    "symptom_no_dbs": round(self.comparison_arms["No DBS"].cumulative_patient_symptom_burden, 3),
-                    "symptom_fixed": round(self.comparison_arms["Fixed DBS"].cumulative_patient_symptom_burden, 3),
-                    "symptom_cl": round(self.comparison_arms["Closed-Loop DBS"].cumulative_patient_symptom_burden, 3),
-                    "teed_fixed": round(self.comparison_arms["Fixed DBS"].cumulative_teed, 2),
-                    "teed_cl": round(self.comparison_arms["Closed-Loop DBS"].cumulative_teed, 2),
-                    "symptom_order_ok": self.comparison_arms["No DBS"].cumulative_patient_symptom_burden
-                    >= self.comparison_arms["Fixed DBS"].cumulative_patient_symptom_burden,
-                },
-                "C",
-            )
-            # #endregion

@@ -136,6 +136,12 @@ class PathologicalBetaExtractor:
         raw_lb_pct = self._welch_band_power_pct(segment, (LOW_BETA_LOW_HZ, LOW_BETA_HIGH_HZ))
         self._finalize_baseline(raw_lb_pct)
 
+        # Hold OFF reference until baseline calibration completes — raw Welch is
+        # unscaled before _calibration_factor is set and would clip to ~25%.
+        if self._off_baseline_pct is None:
+            self._last_lb_power_pct = LB_POWER_OFF_PCT
+            return LB_POWER_OFF_PCT
+
         lb_pct = float(np.clip(raw_lb_pct * self._calibration_factor, 0.0, 25.0))
 
         from backend.clinical_parameters import HIGH_BETA_HIGH_HZ, HIGH_BETA_LOW_HZ

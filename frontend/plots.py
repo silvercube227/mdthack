@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import uuid
 from pathlib import Path
 from typing import List, Sequence, Tuple
 
@@ -21,10 +23,12 @@ from backend.clinical_parameters import LB_POWER_OFF_PCT, LB_POWER_THERAPEUTIC_P
 SCROLL_WINDOW_SEC = 15.0
 MAX_DISPLAY_POINTS = 450
 
-# Streamlit serves files in <cwd>/static at the URL path /app/static/<name>.
-STATIC_DIR = Path.cwd() / "static"
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+STATIC_DIR = _REPO_ROOT / "static"
 LIVE_DATA_FILENAME = "dbs_live.json"
 LIVE_DATA_URL = "app/static/dbs_live.json"
+
+_WRITE_LOCK = threading.Lock()
 
 _COMPARISON_ARMS = ("No DBS", "Fixed DBS", "Closed-Loop DBS")
 
@@ -139,6 +143,12 @@ def write_live_payload(history: dict, comparison_history: dict, intervention_tim
     payload = build_payload(history, comparison_history, intervention_time_sec)
     STATIC_DIR.mkdir(parents=True, exist_ok=True)
     target = STATIC_DIR / LIVE_DATA_FILENAME
-    tmp = STATIC_DIR / f".{LIVE_DATA_FILENAME}.tmp"
-    tmp.write_text(json.dumps(payload), encoding="utf-8")
-    os.replace(tmp, target)
+    body = json.dumps(payload)
+    with _WRITE_LOCK:
+        tmp = STATIC_DIR / f".{LIVE_DATA_FILENAME}.{uuid.uuid4().hex}.tmp"
+        try:
+            tmp.write_text(body, encoding="utf-8")
+            os.replace(tmp, target)
+        finally:
+            if tmp.exists():
+                tmp.unlink()
