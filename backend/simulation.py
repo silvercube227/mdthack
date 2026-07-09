@@ -43,6 +43,7 @@ class ComparisonArmState:
     prior_dbs_amplitude_ma: float = 0.0
     cumulative_patient_symptom_burden: float = 0.0
     cumulative_teed: float = 0.0
+    last_stn_lfp_uv: float = 0.0
 
 
 def _effective_lb_power_pct(measured_pct: float, dbs_amplitude_ma: float) -> float:
@@ -128,6 +129,7 @@ class SimulationRunner:
         self.comparison_history = {
             label: {
                 "time_sec": deque(maxlen=max_samples),
+                "stn_lfp_uv": deque(maxlen=max_samples),
                 "cumulative_patient_symptom_burden": deque(maxlen=max_samples),
                 "cumulative_total_energy_delivered": deque(maxlen=max_samples),
             }
@@ -141,6 +143,7 @@ class SimulationRunner:
         self.comparison_history = {
             label: {
                 "time_sec": deque(maxlen=max_samples),
+                "stn_lfp_uv": deque(maxlen=max_samples),
                 "cumulative_patient_symptom_burden": deque(maxlen=max_samples),
                 "cumulative_total_energy_delivered": deque(maxlen=max_samples),
             }
@@ -176,6 +179,7 @@ class SimulationRunner:
         )
 
         stn_lfp = arm.brain.generate_stn_lfp_sample(arm.prior_dbs_amplitude_ma)
+        arm.last_stn_lfp_uv = stn_lfp
         arm.extractor.ingest_stn_lfp_sample(stn_lfp)
         measured_lb = arm.extractor.compute_pathological_beta_power()
 
@@ -246,6 +250,7 @@ class SimulationRunner:
                 )
                 comp_hist = self.comparison_history[label]
                 comp_hist["time_sec"].append(self.sim_time_sec)
+                comp_hist["stn_lfp_uv"].append(arm.last_stn_lfp_uv)
                 comp_hist["cumulative_patient_symptom_burden"].append(arm.cumulative_patient_symptom_burden)
                 comp_hist["cumulative_total_energy_delivered"].append(arm.cumulative_teed)
 

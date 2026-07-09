@@ -15,7 +15,7 @@ import streamlit.components.v1 as components
 
 from frontend.plots import LIVE_DATA_URL, SCROLL_WINDOW_SEC
 
-_CHART_HEIGHT = 1080
+_CHART_HEIGHT = 1240
 
 _HTML = r"""
 <!DOCTYPE html>
@@ -44,12 +44,11 @@ _HTML = r"""
 <body>
 <div id="fatal"></div>
 <div class="grid">
-  <div class="card wide"><h3>STN Local Field Potential (raw µV)</h3><div id="c-stn" class="chart"></div></div>
+  <div class="card wide"><h3>STN LFP — Raw Simulated</h3><div id="c-untreated" class="chart"></div></div>
+  <div class="card wide"><h3>STN LFP — Treated Simulated</h3><div id="c-treated" class="chart"></div></div>
   <div class="card wide"><h3>Pathological Beta Power (% total spectral power)</h3><div id="c-beta" class="chart"></div></div>
-  <div class="card"><h3>DBS Amplitude — controller output (mA)</h3><div id="c-dbs" class="chart"></div></div>
-  <div class="card"><h3>Low-Beta Burst Duration (ms)</h3><div id="c-burst" class="chart"></div></div>
-  <div class="card"><h3>Cumulative Symptom Burden — lower is better</h3><div id="c-sym" class="chart"></div></div>
-  <div class="card"><h3>Total Energy Delivered — lower is better</h3><div id="c-teed" class="chart"></div></div>
+  <div class="card wide"><h3>DBS Amplitude — controller output (mA)</h3><div id="c-dbs" class="chart"></div></div>
+  <div class="card wide"><h3>Low-Beta Burst Duration (ms)</h3><div id="c-burst" class="chart"></div></div>
 </div>
 <script>
 const DATA_URL = "__DATA_URL__";
@@ -114,8 +113,8 @@ function serie(label, color, opts = {}) {
 }
 function make(elId, series, yLabel, plugins, yRange, legend) {
   const el = document.getElementById(elId);
-  const h = elId === "c-stn" ? 180 : (elId === "c-beta" ? 205
-          : (elId === "c-sym" || elId === "c-teed" ? 205 : 175));
+  const h = (elId === "c-untreated" || elId === "c-treated") ? 185
+          : (elId === "c-beta" ? 205 : 175);
   const opts = {
     width: el.clientWidth || 600, height: h,
     legend: { show: !!legend },
@@ -141,9 +140,11 @@ function safeSet(u, data) {
 }
 
 /* ---- build charts once --------------------------------------------------- */
-let cStn, cBeta, cDbs, cBurst, cSym, cTeed;
+let cUntreated, cTreated, cBeta, cDbs, cBurst;
 function buildCharts() {
-  cStn = make("c-stn", [serie("STN LFP", C.cobalt, { width: 1.4 })], "µV",
+  cUntreated = make("c-untreated", [serie("Raw STN LFP", C.red, { width: 1.4 })], "µV",
+    [vLinePlugin()], [-38, 38], false);
+  cTreated = make("c-treated", [serie("Treated STN LFP", C.cobalt, { width: 1.4 })], "µV",
     [vLinePlugin()], [-38, 38], false);
 
   cBeta = make("c-beta",
@@ -154,7 +155,7 @@ function buildCharts() {
     [vLinePlugin(), hLinePlugin(() => [
        { y: refs.offLb, color: C.muted, label: "OFF ref 8.4%" },
        { y: refs.therLb, color: C.green, label: "Therapeutic 2.1%" }])],
-    [0, 16], true);
+    [0, 36], true);
 
   cDbs = make("c-dbs", [serie("DBS mA", C.green, { width: 2 })], "mA",
     [vLinePlugin()], [0, refs.maxMa * 1.05], false);
@@ -164,14 +165,6 @@ function buildCharts() {
        { y: refs.burstOff, color: C.muted, label: "OFF 579 ms" },
        { y: refs.burstOn, color: C.green, label: "ON 359 ms" }])],
     null, false);
-
-  const comp = () => [
-    serie("No DBS", C.gray, { width: 2, dash: [4,4], dp: 0 }),
-    serie("Fixed DBS", C.purple, { width: 2, dp: 0 }),
-    serie("Closed-Loop DBS", C.cobalt, { width: 3, dp: 0 }),
-  ];
-  cSym = make("c-sym", comp(), "ms·s", [vLinePlugin()], null, true);
-  cTeed = make("c-teed", comp(), "mA²·s", [vLinePlugin()], null, true);
 }
 
 /* ---- polling loop -------------------------------------------------------- */
@@ -197,13 +190,14 @@ async function poll() {
     xMin = xMax - WINDOW;
   }
 
-  safeSet(cStn,  [d.t, d.stn]);
+  const cmpT = d.cmpT;
+  if (cmpT) {
+    safeSet(cUntreated, [cmpT, d.untreatedStn]);
+    safeSet(cTreated,   [cmpT, d.treatedStn]);
+  }
   safeSet(cBeta, [d.t, d.lb, d.hb, d.thr]);
   safeSet(cDbs,  [d.t, d.dbs]);
   safeSet(cBurst,[d.t, d.burst]);
-  const ct = d.comp && d.comp.t, sy = d.comp && d.comp.symptom, en = d.comp && d.comp.energy;
-  if (ct && sy) safeSet(cSym,  [ct, sy["No DBS"], sy["Fixed DBS"], sy["Closed-Loop DBS"]]);
-  if (ct && en) safeSet(cTeed, [ct, en["No DBS"], en["Fixed DBS"], en["Closed-Loop DBS"]]);
 }
 
 function boot() {

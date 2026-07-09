@@ -30,8 +30,6 @@ LIVE_DATA_URL = "app/static/dbs_live.json"
 
 _WRITE_LOCK = threading.Lock()
 
-_COMPARISON_ARMS = ("No DBS", "Fixed DBS", "Closed-Loop DBS")
-
 
 def decimate_scroll_window(
     time_sec: Sequence[float],
@@ -89,29 +87,15 @@ def build_payload(history: dict, comparison_history: dict, intervention_time_sec
         t[:n_main], stn[:n_main], lb[:n_main], hb[:n_main], thr[:n_main], burst[:n_main], dbs[:n_main],
     )
 
-    arm_t: dict[str, list] = {}
-    symptom: dict[str, List[float]] = {}
-    energy: dict[str, List[float]] = {}
-    for arm in _COMPARISON_ARMS:
-        hist = comparison_history[arm]
-        at, sy, en = decimate_scroll_window(
-            hist["time_sec"],
-            hist["cumulative_patient_symptom_burden"],
-            hist["cumulative_total_energy_delivered"],
-        )
-        arm_t[arm] = list(at)
-        symptom[arm] = list(sy)
-        energy[arm] = list(en)
-
-    n_comp = min(
-        [len(arm_t[a]) for a in _COMPARISON_ARMS]
-        + [len(symptom[a]) for a in _COMPARISON_ARMS]
-        + [len(energy[a]) for a in _COMPARISON_ARMS]
-    )
-    comp_t = arm_t[_COMPARISON_ARMS[0]][:n_comp]
-    for arm in _COMPARISON_ARMS:
-        symptom[arm] = _round(symptom[arm][:n_comp])
-        energy[arm] = _round(energy[arm][:n_comp])
+    # Untreated (No DBS) vs treated (Closed-Loop DBS) raw STN LFP waveforms.
+    untreated = comparison_history["No DBS"]
+    treated = comparison_history["Closed-Loop DBS"]
+    ut_t, ut_stn = decimate_scroll_window(untreated["time_sec"], untreated["stn_lfp_uv"])
+    tr_t, tr_stn = decimate_scroll_window(treated["time_sec"], treated["stn_lfp_uv"])
+    n_cmp = min(len(ut_t), len(ut_stn), len(tr_t), len(tr_stn))
+    cmp_t = ut_t[:n_cmp]
+    ut_stn = ut_stn[:n_cmp]
+    tr_stn = tr_stn[:n_cmp]
 
     # Deterministic scroll window from the monotonic sim clock (never derived from
     # the decimated data extents — that would let the x-axis flip-flop before the
@@ -129,17 +113,14 @@ def build_payload(history: dict, comparison_history: dict, intervention_time_sec
 
     return {
         "t": _round(t),
-        "stn": _round(stn),
         "lb": _round(lb),
         "hb": _round(hb),
         "thr": _round(thr),
         "burst": _round(burst, 1),
         "dbs": _round(dbs),
-        "comp": {
-            "t": _round(comp_t),
-            "symptom": symptom,
-            "energy": energy,
-        },
+        "cmpT": _round(cmp_t),
+        "untreatedStn": _round(ut_stn),
+        "treatedStn": _round(tr_stn),
         "intervention": None if intervention_time_sec is None else round(float(intervention_time_sec), 3),
         "window": SCROLL_WINDOW_SEC,
         "xmin": round(x_min, 3),

@@ -148,7 +148,7 @@ def main() -> None:
 
     render_therapy_recommendation_panel()
 
-    section("Live neural biomarkers & closed-loop value")
+    section("Live neural biomarkers — untreated vs treated")
     live_metrics(control_mode, limits, dopaminergic_state, symptom_severity_scale, paused)
     render_persistent_charts()
 
