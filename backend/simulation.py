@@ -8,8 +8,9 @@ from typing import Dict
 
 import numpy as np
 
+from backend.clinical_parameters import DopaminergicState
 from backend.constants import DBSControlMode, MAX_HISTORY_SECONDS, SAMPLE_RATE_HZ, TICKS_PER_FRAME
-from backend.pid import DBSControllerLayer
+from backend.controller import ControllerLimits, DBSControllerLayer, compute_teed_increment
 from backend.signal_cleaning import PathologicalBetaExtractor
 from backend.signal_generator import SimulatedSTNBrain
 
@@ -22,7 +23,7 @@ class ComparisonArmState:
     control_mode: DBSControlMode
     prior_dbs_amplitude_ma: float = 0.0
     cumulative_patient_symptom_burden: float = 0.0
-    cumulative_total_energy_delivered: float = 0.0
+    cumulative_teed: float = 0.0
 
 
 def _create_comparison_arms() -> Dict[str, ComparisonArmState]:
@@ -43,7 +44,7 @@ def _create_comparison_arms() -> Dict[str, ComparisonArmState]:
             brain=SimulatedSTNBrain(rng=np.random.default_rng(42)),
             extractor=PathologicalBetaExtractor(),
             controller=DBSControllerLayer(),
-            control_mode=DBSControlMode.PROPORTIONAL,
+            control_mode=DBSControlMode.ADAPTIVE_SINGLE_THRESHOLD,
         ),
     }
 
@@ -67,6 +68,8 @@ class SimulationRunner:
             "time_sec": deque(maxlen=max_samples),
             "stn_lfp_uv": deque(maxlen=max_samples),
             "pathological_beta_power": deque(maxlen=max_samples),
+            "high_beta_power": deque(maxlen=max_samples),
+            "low_beta_burst_duration_ms": deque(maxlen=max_samples),
             "dbs_amplitude_ma": deque(maxlen=max_samples),
             "beta_detection_threshold": deque(maxlen=max_samples),
         }
@@ -85,64 +88,76 @@ class SimulationRunner:
         self,
         arm: ComparisonArmState,
         dt_sec: float,
-        controller_gain_kp: float,
-        threshold: float,
+        limits: ControllerLimits,
+        dopaminergic_state: DopaminergicState,
+        symptom_severity_scale: float,
     ) -> None:
+        arm.brain.dopaminergic_state = dopaminergic_state
+        arm.brain.symptom_severity_scale = symptom_severity_scale
+
         stn_lfp = arm.brain.generate_stn_lfp_sample(arm.prior_dbs_amplitude_ma)
         arm.extractor.ingest_stn_lfp_sample(stn_lfp)
-        beta_power = arm.extractor.compute_pathological_beta_power()
+        lb_power_pct = arm.extractor.compute_pathological_beta_power()
 
         dbs_amplitude = arm.controller.compute_dbs_amplitude_ma(
-            arm.control_mode, beta_power, controller_gain_kp, threshold, dt_sec
+            arm.control_mode, lb_power_pct, limits, dt_sec
         )
 
-        arm.cumulative_patient_symptom_burden += beta_power * dt_sec
-        arm.cumulative_total_energy_delivered += dbs_amplitude * dt_sec
+        if arm.brain.burst_active:
+            burst_ms = 1000.0 * arm.brain.burst_samples_remaining / arm.brain.sample_rate_hz
+        else:
+            burst_ms = 0.0
+        # Symptom proxy: burst duration weighted by relative LB power (Anderson/Tinkhauser)
+        arm.cumulative_patient_symptom_burden += (burst_ms / 579.0) * (lb_power_pct / 8.43) * dt_sec
+        arm.cumulative_teed += compute_teed_increment(dbs_amplitude, dt_sec)
         arm.prior_dbs_amplitude_ma = dbs_amplitude
 
     def advance(
         self,
         control_mode: DBSControlMode,
-        beta_detection_threshold: float,
-        controller_gain_kp: float,
-        base_symptom_severity: float,
-        neuromodulatory_gain: float,
+        limits: ControllerLimits,
+        dopaminergic_state: DopaminergicState,
+        symptom_severity_scale: float,
     ) -> None:
         """Advance primary + shadow simulations by TICKS_PER_FRAME samples."""
         dt_sec = 1.0 / SAMPLE_RATE_HZ
 
-        self.main_brain.base_symptom_severity = base_symptom_severity
-        self.main_brain.neuromodulatory_gain = neuromodulatory_gain
+        self.main_brain.dopaminergic_state = dopaminergic_state
+        self.main_brain.symptom_severity_scale = symptom_severity_scale
 
         for arm in self.comparison_arms.values():
-            arm.brain.base_symptom_severity = base_symptom_severity
-            arm.brain.neuromodulatory_gain = neuromodulatory_gain
+            arm.brain.dopaminergic_state = dopaminergic_state
+            arm.brain.symptom_severity_scale = symptom_severity_scale
 
         for _ in range(TICKS_PER_FRAME):
             stn_lfp = self.main_brain.generate_stn_lfp_sample(self.prior_dbs_amplitude_ma)
             self.main_extractor.ingest_stn_lfp_sample(stn_lfp)
-            pathological_beta_power = self.main_extractor.compute_pathological_beta_power()
+            lb_power_pct = self.main_extractor.compute_pathological_beta_power()
 
             dbs_amplitude_ma = self.main_controller.compute_dbs_amplitude_ma(
-                control_mode,
-                pathological_beta_power,
-                controller_gain_kp,
-                beta_detection_threshold,
-                dt_sec,
+                control_mode, lb_power_pct, limits, dt_sec
             )
 
             self.sim_time_sec += dt_sec
             self.history["time_sec"].append(self.sim_time_sec)
             self.history["stn_lfp_uv"].append(stn_lfp)
-            self.history["pathological_beta_power"].append(pathological_beta_power)
+            self.history["pathological_beta_power"].append(lb_power_pct)
+            self.history["high_beta_power"].append(self.main_extractor.high_beta_power_pct)
+            self.history["low_beta_burst_duration_ms"].append(
+                1000.0 * self.main_brain.burst_samples_remaining / self.main_brain.sample_rate_hz
+                if self.main_brain.burst_active
+                else 0.0
+            )
             self.history["dbs_amplitude_ma"].append(dbs_amplitude_ma)
-            self.history["beta_detection_threshold"].append(beta_detection_threshold)
+            self.history["beta_detection_threshold"].append(limits.lfp_threshold_pct)
 
             self.prior_dbs_amplitude_ma = dbs_amplitude_ma
 
             for label, arm in self.comparison_arms.items():
-                self._advance_comparison_arm(arm, dt_sec, controller_gain_kp, beta_detection_threshold)
+                self._advance_comparison_arm(
+                    arm, dt_sec, limits, dopaminergic_state, symptom_severity_scale
+                )
                 comp_hist = self.comparison_history[label]
                 comp_hist["time_sec"].append(self.sim_time_sec)
                 comp_hist["cumulative_patient_symptom_burden"].append(arm.cumulative_patient_symptom_burden)
-                comp_hist["cumulative_total_energy_delivered"].append(arm.cumulative_total_energy_delivered)
+                comp_hist["cumulative_total_energy_delivered"].append(arm.cumulative_teed)

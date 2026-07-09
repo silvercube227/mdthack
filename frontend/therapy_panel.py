@@ -13,13 +13,15 @@ def render_therapy_recommendation_panel() -> None:
     beta_history = list(runner.history["pathological_beta_power"])
     recommendation = recommend_therapy_parameters(beta_history)
 
-    st.markdown("#### Recommended Therapy Parameters")
-    c1, c2, c3, c4 = st.columns([1.2, 1, 1, 1.2])
+    st.markdown("#### Recommended Therapy Parameters (ADAPT-PD Workflow)")
+    c1, c2, c4 = st.columns([1.4, 1.2, 1.2])
 
     with c1:
         st.markdown(
-            f"**Beta Detection Threshold:** `{recommendation.pathological_beta_detection_threshold:.2f}`  \n"
-            f"**Controller Gain (Kp):** `{recommendation.controller_gain_kp:.1f}`  \n"
+            f"**LFP Threshold (ST):** `{recommendation.lfp_threshold_pct:.1f}%`  \n"
+            f"**Dual Thresholds:** `{recommendation.lfp_lower_threshold_pct:.1f}%` / "
+            f"`{recommendation.lfp_upper_threshold_pct:.1f}%`  \n"
+            f"**Stim Limits:** `{recommendation.lower_stim_ma:.1f}` – `{recommendation.upper_stim_ma:.1f}` mA  \n"
             f"**Suggested Mode:** `{recommendation.dbs_control_mode.value}`"
         )
     with c2:
@@ -31,11 +33,11 @@ def render_therapy_recommendation_panel() -> None:
 
     steps = st.columns(5)
     pipeline = [
-        ("1 · STN LFP", "Pathological Beta waves generated"),
-        ("2 · Biomarker Filter", "13–30 Hz band power extracted"),
-        ("3 · Therapy Suggestion", "Parameters inferred from Beta burden"),
-        ("4 · aDBS Control", "Proportional stimulation"),
-        ("5 · Feedback", "DBS suppresses Beta at t+1"),
+        ("1 · STN LFP", "Beta bursts @ 250 Hz (Percept)"),
+        ("2 · Biomarker", "LB power % total + burst detection"),
+        ("3 · Timeline Cal.", "OFF baseline threshold"),
+        ("4 · aDBS Control", "ADAPT-PD ST / DT algorithm"),
+        ("5 · Feedback", "Dose-response Beta suppression"),
     ]
     for col, (title, detail) in zip(steps, pipeline):
         with col:
