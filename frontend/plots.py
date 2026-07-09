@@ -12,9 +12,7 @@ atomically to Streamlit's static-serving directory.
 from __future__ import annotations
 
 import json
-import os
 import threading
-import uuid
 from pathlib import Path
 from typing import List, Sequence, Tuple
 
@@ -142,10 +140,4 @@ def write_live_payload(history: dict, comparison_history: dict, intervention_tim
     target = STATIC_DIR / LIVE_DATA_FILENAME
     body = json.dumps(payload)
     with _WRITE_LOCK:
-        tmp = STATIC_DIR / f".{LIVE_DATA_FILENAME}.{uuid.uuid4().hex}.tmp"
-        try:
-            tmp.write_text(body, encoding="utf-8")
-            os.replace(tmp, target)
-        finally:
-            if tmp.exists():
-                tmp.unlink()
+        target.write_text(body, encoding="utf-8")
