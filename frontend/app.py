@@ -10,15 +10,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import streamlit as st
 
 from backend.constants import DBSControlMode
-from frontend.plots import (
-    build_beta_power_figure,
-    build_burst_duration_figure,
-    build_closed_loop_efficiency_figure,
-    build_dbs_amplitude_figure,
-    build_stn_lfp_figure,
-)
-from frontend.session import get_runner, render_sidebar
+from frontend.session import get_intervention_marker, get_runner, refresh_live_charts, render_sidebar
 from frontend.therapy_panel import render_therapy_recommendation_panel
+from frontend.debug_log import debug_log
 
 
 def inject_dark_theme_css() -> None:
@@ -37,13 +31,14 @@ def inject_dark_theme_css() -> None:
         .dbs-header h1 { color: #e6edf3; font-size: 1.55rem; margin: 0; }
         .dbs-header p { color: #9ba7b8; margin: 0.4rem 0 0 0; font-size: 0.95rem; }
         div[data-testid="stMetricValue"] { color: #58a6ff; }
+        iframe { border: none !important; }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
 
-@st.fragment(run_every=0.35)
+@st.fragment(run_every=0.4)
 def live_simulation_fragment(
     control_mode: DBSControlMode,
     limits,
@@ -52,9 +47,37 @@ def live_simulation_fragment(
     paused: bool,
 ) -> None:
     runner = get_runner()
+    intervention_time_sec, _ = get_intervention_marker()
 
     if not paused:
-        runner.advance(control_mode, limits, dopaminergic_state, symptom_severity_scale)
+        runner.advance(
+            control_mode,
+            limits,
+            dopaminergic_state,
+            symptom_severity_scale,
+            intervention_time_sec=intervention_time_sec,
+        )
+
+    # #region agent log
+    if not paused and list(runner.history["time_sec"]):
+        import numpy as np
+
+        lfp_tail = list(runner.history["stn_lfp_uv"])[-100:]
+        debug_log(
+            "app.py:live_simulation_fragment",
+            "fragment_tick",
+            {
+                "intervention_time_sec": intervention_time_sec,
+                "control_mode": control_mode.value,
+                "dbs_ma": runner.history["dbs_amplitude_ma"][-1],
+                "lb_scale": runner.main_brain.lb_power_scale,
+                "lfp_std_tail": float(np.std(lfp_tail)) if lfp_tail else 0.0,
+                "sim_time_sec": runner.sim_time_sec,
+            },
+            hypothesis_id="B",
+            run_id="post-fix",
+        )
+    # #endregion
 
     hist = runner.history
     t = list(hist["time_sec"])
@@ -72,7 +95,7 @@ def live_simulation_fragment(
     closed_loop_arm = runner.comparison_arms["Closed-Loop DBS"]
     no_dbs_arm = runner.comparison_arms["No DBS"]
     fixed_arm = runner.comparison_arms["Fixed DBS"]
-    if closed_loop_arm.cumulative_teed > 0 and no_dbs_arm.cumulative_patient_symptom_burden > 0:
+    if intervention_time_sec is not None and no_dbs_arm.cumulative_patient_symptom_burden > 0:
         symptom_reduction = 1.0 - (
             closed_loop_arm.cumulative_patient_symptom_burden
             / max(no_dbs_arm.cumulative_patient_symptom_burden, 1e-6)
@@ -85,32 +108,7 @@ def live_simulation_fragment(
             f"TEED savings vs Fixed DBS: **{energy_vs_fixed * 100:.1f}%**"
         )
 
-    st.plotly_chart(build_stn_lfp_figure(t, list(hist["stn_lfp_uv"])), use_container_width=True, key="plot_stn_lfp")
-    st.plotly_chart(
-        build_beta_power_figure(
-            t,
-            list(hist["pathological_beta_power"]),
-            list(hist["high_beta_power"]),
-            list(hist["beta_detection_threshold"]),
-        ),
-        use_container_width=True,
-        key="plot_beta_power",
-    )
-    st.plotly_chart(
-        build_burst_duration_figure(t, list(hist["low_beta_burst_duration_ms"])),
-        use_container_width=True,
-        key="plot_burst",
-    )
-    st.plotly_chart(
-        build_dbs_amplitude_figure(t, list(hist["dbs_amplitude_ma"])),
-        use_container_width=True,
-        key="plot_dbs_amp",
-    )
-    st.plotly_chart(
-        build_closed_loop_efficiency_figure(runner.comparison_history),
-        use_container_width=True,
-        key="plot_efficiency",
-    )
+    refresh_live_charts(hist, runner.comparison_history)
 
 
 def main() -> None:

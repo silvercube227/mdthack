@@ -63,7 +63,7 @@ DETECTION_WINDOW_MS = 500
 
 # Simulation
 MAX_HISTORY_SECONDS = 30
-TICKS_PER_FRAME = 32
+TICKS_PER_FRAME = 48
 BASELINE_CALIBRATION_SEC = 5.0
 
 # TEED simplification: proportional to I^2 * dt (ADAPT-PD uses TEED as energy endpoint)
@@ -91,6 +91,19 @@ def low_beta_power_pct_from_stim_ma(stim_amplitude_ma: float) -> float:
     log_table = np.log1p(DOSE_RESPONSE_STIM_MA)
     log_beta = np.interp(log_stim, log_table, np.log(DOSE_RESPONSE_BETA_PCT))
     return float(np.exp(log_beta))
+
+
+def beta_amplitude_scale_from_stim_ma(stim_amplitude_ma: float) -> float:
+    """
+    Map DBS amplitude to beta burst amplitude scale (0–1 relative to OFF baseline).
+
+    At 0 mA → full pathological amplitude (1.0). At therapeutic dose → ~sqrt(2.11/8.43).
+    """
+    if stim_amplitude_ma <= 0.0:
+        return 1.0
+    target_pct = low_beta_power_pct_from_stim_ma(stim_amplitude_ma)
+    min_scale = 0.18
+    return float(np.clip(np.sqrt(target_pct / LB_POWER_OFF_PCT), min_scale, 1.0))
 
 
 @dataclass(frozen=True)

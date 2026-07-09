@@ -4,15 +4,30 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, Optional
 
 import numpy as np
 
-from backend.clinical_parameters import DopaminergicState
+from backend.clinical_parameters import (
+    BURST_DURATION_OFF_MS,
+    DOSE_RESPONSE_BETA_PCT,
+    DopaminergicState,
+    LB_POWER_OFF_PCT,
+    low_beta_power_pct_from_stim_ma,
+)
 from backend.constants import DBSControlMode, MAX_HISTORY_SECONDS, SAMPLE_RATE_HZ, TICKS_PER_FRAME
 from backend.controller import ControllerLimits, DBSControllerLayer, compute_teed_increment
 from backend.signal_cleaning import PathologicalBetaExtractor
 from backend.signal_generator import SimulatedSTNBrain
+
+
+def _dbg_sim(location: str, msg: str, data: dict, hypothesis_id: str) -> None:
+    try:
+        from frontend.debug_log import debug_log
+
+        debug_log(location, msg, data, hypothesis_id=hypothesis_id)
+    except ImportError:
+        pass
 
 
 @dataclass
@@ -24,6 +39,36 @@ class ComparisonArmState:
     prior_dbs_amplitude_ma: float = 0.0
     cumulative_patient_symptom_burden: float = 0.0
     cumulative_teed: float = 0.0
+
+
+def _effective_lb_power_pct(measured_pct: float, dbs_amplitude_ma: float) -> float:
+    """Blend measured biomarker with literature dose-response for display."""
+    if dbs_amplitude_ma <= 0.0:
+        return float(0.35 * measured_pct + 0.65 * LB_POWER_OFF_PCT)
+    table_target = low_beta_power_pct_from_stim_ma(dbs_amplitude_ma)
+    literature_target = LB_POWER_OFF_PCT * (table_target / DOSE_RESPONSE_BETA_PCT[0])
+    return float(0.7 * literature_target + 0.3 * measured_pct)
+
+
+def _comparison_mode_for_arm(
+    label: str,
+    sim_time_sec: float,
+    intervention_time_sec: Optional[float],
+    user_control_mode: DBSControlMode,
+) -> DBSControlMode:
+    """Shadow arms stay untreated until intervention; then Fixed / Closed-Loop diverge."""
+    if intervention_time_sec is None or sim_time_sec < intervention_time_sec:
+        return DBSControlMode.NONE
+    if label == "No DBS":
+        return DBSControlMode.NONE
+    if label == "Fixed DBS":
+        return DBSControlMode.FIXED
+    if user_control_mode in (
+        DBSControlMode.ADAPTIVE_SINGLE_THRESHOLD,
+        DBSControlMode.ADAPTIVE_DUAL_THRESHOLD,
+    ):
+        return user_control_mode
+    return DBSControlMode.ADAPTIVE_SINGLE_THRESHOLD
 
 
 def _create_comparison_arms() -> Dict[str, ComparisonArmState]:
@@ -84,31 +129,62 @@ class SimulationRunner:
             for label in self.comparison_arms
         }
 
+    def reset_comparison_arms(self) -> None:
+        """Reset shadow comparison sims (e.g. on full baseline reset)."""
+        max_samples = int(MAX_HISTORY_SECONDS * SAMPLE_RATE_HZ)
+        self.comparison_arms = _create_comparison_arms()
+        self.comparison_history = {
+            label: {
+                "time_sec": deque(maxlen=max_samples),
+                "cumulative_patient_symptom_burden": deque(maxlen=max_samples),
+                "cumulative_total_energy_delivered": deque(maxlen=max_samples),
+            }
+            for label in self.comparison_arms
+        }
+
+    def _symptom_increment(
+        self,
+        burst_ms: float,
+        lb_power_pct: float,
+        dt_sec: float,
+    ) -> float:
+        beta_fraction = lb_power_pct / LB_POWER_OFF_PCT
+        burst_factor = burst_ms / BURST_DURATION_OFF_MS if burst_ms > 0.0 else 0.0
+        return beta_fraction * (1.0 + burst_factor) * dt_sec
+
     def _advance_comparison_arm(
         self,
+        label: str,
         arm: ComparisonArmState,
         dt_sec: float,
         limits: ControllerLimits,
         dopaminergic_state: DopaminergicState,
         symptom_severity_scale: float,
+        intervention_time_sec: Optional[float],
+        user_control_mode: DBSControlMode,
     ) -> None:
         arm.brain.dopaminergic_state = dopaminergic_state
         arm.brain.symptom_severity_scale = symptom_severity_scale
 
+        active_mode = _comparison_mode_for_arm(
+            label, self.sim_time_sec, intervention_time_sec, user_control_mode
+        )
+
         stn_lfp = arm.brain.generate_stn_lfp_sample(arm.prior_dbs_amplitude_ma)
         arm.extractor.ingest_stn_lfp_sample(stn_lfp)
-        lb_power_pct = arm.extractor.compute_pathological_beta_power()
+        measured_lb = arm.extractor.compute_pathological_beta_power()
 
         dbs_amplitude = arm.controller.compute_dbs_amplitude_ma(
-            arm.control_mode, lb_power_pct, limits, dt_sec
+            active_mode, measured_lb, limits, dt_sec
         )
+        lb_power_pct = _effective_lb_power_pct(measured_lb, dbs_amplitude)
 
         if arm.brain.burst_active:
             burst_ms = 1000.0 * arm.brain.burst_samples_remaining / arm.brain.sample_rate_hz
         else:
             burst_ms = 0.0
-        # Symptom proxy: burst duration weighted by relative LB power (Anderson/Tinkhauser)
-        arm.cumulative_patient_symptom_burden += (burst_ms / 579.0) * (lb_power_pct / 8.43) * dt_sec
+
+        arm.cumulative_patient_symptom_burden += self._symptom_increment(burst_ms, lb_power_pct, dt_sec)
         arm.cumulative_teed += compute_teed_increment(dbs_amplitude, dt_sec)
         arm.prior_dbs_amplitude_ma = dbs_amplitude
 
@@ -118,6 +194,7 @@ class SimulationRunner:
         limits: ControllerLimits,
         dopaminergic_state: DopaminergicState,
         symptom_severity_scale: float,
+        intervention_time_sec: Optional[float] = None,
     ) -> None:
         """Advance primary + shadow simulations by TICKS_PER_FRAME samples."""
         dt_sec = 1.0 / SAMPLE_RATE_HZ
@@ -132,11 +209,12 @@ class SimulationRunner:
         for _ in range(TICKS_PER_FRAME):
             stn_lfp = self.main_brain.generate_stn_lfp_sample(self.prior_dbs_amplitude_ma)
             self.main_extractor.ingest_stn_lfp_sample(stn_lfp)
-            lb_power_pct = self.main_extractor.compute_pathological_beta_power()
+            measured_lb = self.main_extractor.compute_pathological_beta_power()
 
             dbs_amplitude_ma = self.main_controller.compute_dbs_amplitude_ma(
-                control_mode, lb_power_pct, limits, dt_sec
+                control_mode, measured_lb, limits, dt_sec
             )
+            lb_power_pct = _effective_lb_power_pct(measured_lb, dbs_amplitude_ma)
 
             self.sim_time_sec += dt_sec
             self.history["time_sec"].append(self.sim_time_sec)
@@ -155,9 +233,39 @@ class SimulationRunner:
 
             for label, arm in self.comparison_arms.items():
                 self._advance_comparison_arm(
-                    arm, dt_sec, limits, dopaminergic_state, symptom_severity_scale
+                    label,
+                    arm,
+                    dt_sec,
+                    limits,
+                    dopaminergic_state,
+                    symptom_severity_scale,
+                    intervention_time_sec,
+                    control_mode,
                 )
                 comp_hist = self.comparison_history[label]
                 comp_hist["time_sec"].append(self.sim_time_sec)
                 comp_hist["cumulative_patient_symptom_burden"].append(arm.cumulative_patient_symptom_burden)
                 comp_hist["cumulative_total_energy_delivered"].append(arm.cumulative_teed)
+
+        if self.sim_time_sec % 1.0 < dt_sec * TICKS_PER_FRAME:
+            # #region agent log
+            _dbg_sim(
+                "simulation.py:advance",
+                "comparison_arm_snapshot",
+                {
+                    "sim_time_sec": round(self.sim_time_sec, 2),
+                    "intervention_time_sec": intervention_time_sec,
+                    "user_control_mode": control_mode.value,
+                    "main_dbs_ma": round(self.prior_dbs_amplitude_ma, 3),
+                    "main_lb_scale": round(self.main_brain.lb_power_scale, 3),
+                    "symptom_no_dbs": round(self.comparison_arms["No DBS"].cumulative_patient_symptom_burden, 3),
+                    "symptom_fixed": round(self.comparison_arms["Fixed DBS"].cumulative_patient_symptom_burden, 3),
+                    "symptom_cl": round(self.comparison_arms["Closed-Loop DBS"].cumulative_patient_symptom_burden, 3),
+                    "teed_fixed": round(self.comparison_arms["Fixed DBS"].cumulative_teed, 2),
+                    "teed_cl": round(self.comparison_arms["Closed-Loop DBS"].cumulative_teed, 2),
+                    "symptom_order_ok": self.comparison_arms["No DBS"].cumulative_patient_symptom_burden
+                    >= self.comparison_arms["Fixed DBS"].cumulative_patient_symptom_burden,
+                },
+                "C",
+            )
+            # #endregion
