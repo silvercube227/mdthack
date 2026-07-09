@@ -157,7 +157,7 @@ def _render_device_connection() -> None:
     with st.container(border=True):
         st.markdown("**Device Connection**")
         if connected:
-            st.success("BLE advertising · waiting for Nano ESP32")
+            st.success("BLE advertising")
         else:
             st.caption("No stimulator paired · BLE host stopped")
 
@@ -171,7 +171,7 @@ def _render_device_connection() -> None:
                 st.toast("BLE host stopped.")
             elif start_ble_host():
                 st.session_state["bt_device_connected"] = True
-                st.toast("BLE host advertising — waiting for Nano ESP32 to connect.")
+                st.toast("BLE host advertising")
             else:
                 st.toast("Failed to start BLE host — check logs.", icon="\u26a0\ufe0f")
             st.rerun()
