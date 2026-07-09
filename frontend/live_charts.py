@@ -62,6 +62,7 @@ const C = {
 
 let intervention = null;
 let refs = { offLb: 8.43, therLb: 2.11, burstOff: 579, burstOn: 359, maxMa: 3.5 };
+let xMin = 0, xMax = WINDOW;   // deterministic scroll window supplied by the server
 
 /* ---- plugins ------------------------------------------------------------- */
 function vLinePlugin() {
@@ -97,10 +98,7 @@ function hLinePlugin(getLines) {
 
 /* ---- chart factory ------------------------------------------------------- */
 function xScale() {
-  return { time: false, range: (u, min, max) => {
-    if (max == null || max <= WINDOW) return [0, WINDOW];
-    return [max - WINDOW, max];
-  }};
+  return { time: false, range: () => [xMin, xMax] };
 }
 function axes(yLabel) {
   const base = { stroke: C.slate, grid: { stroke: C.grid, width: 1 },
@@ -188,6 +186,16 @@ async function poll() {
 
   refs = d.refs || refs;
   intervention = d.intervention;
+
+  // Deterministic scroll window from the server; fall back to the data extent so
+  // the line can never be clipped fully off-screen on a stale/partial frame.
+  if (typeof d.xmin === "number" && typeof d.xmax === "number" && d.xmax > d.xmin) {
+    xMin = d.xmin; xMax = d.xmax;
+  } else if (d.t.length) {
+    const last = d.t[d.t.length - 1];
+    xMax = Math.max(last, WINDOW);
+    xMin = xMax - WINDOW;
+  }
 
   safeSet(cStn,  [d.t, d.stn]);
   safeSet(cBeta, [d.t, d.lb, d.hb, d.thr]);

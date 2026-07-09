@@ -113,6 +113,20 @@ def build_payload(history: dict, comparison_history: dict, intervention_time_sec
         symptom[arm] = _round(symptom[arm][:n_comp])
         energy[arm] = _round(energy[arm][:n_comp])
 
+    # Deterministic scroll window from the monotonic sim clock (never derived from
+    # the decimated data extents — that would let the x-axis flip-flop before the
+    # window fills). Grows from 0 → WINDOW, then scrolls with the latest sample.
+    time_axis = history["time_sec"]
+    t_last = float(time_axis[-1]) if len(time_axis) else 0.0
+    data_last = float(t[-1]) if t else t_last
+    if t_last <= SCROLL_WINDOW_SEC:
+        x_min, x_max = 0.0, SCROLL_WINDOW_SEC
+    else:
+        # Anchor the right edge to the last *plotted* point so the window exactly
+        # hugs the data (no gap/clip at the leading edge).
+        x_max = data_last
+        x_min = data_last - SCROLL_WINDOW_SEC
+
     return {
         "t": _round(t),
         "stn": _round(stn),
@@ -128,6 +142,8 @@ def build_payload(history: dict, comparison_history: dict, intervention_time_sec
         },
         "intervention": None if intervention_time_sec is None else round(float(intervention_time_sec), 3),
         "window": SCROLL_WINDOW_SEC,
+        "xmin": round(x_min, 3),
+        "xmax": round(x_max, 3),
         "refs": {
             "offLb": LB_POWER_OFF_PCT,
             "therLb": LB_POWER_THERAPEUTIC_PCT,
