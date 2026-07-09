@@ -156,7 +156,7 @@ function buildCharts() {
     [vLinePlugin(), hLinePlugin(() => [
        { y: refs.offLb, color: C.muted, label: "OFF ref 8.4%" },
        { y: refs.therLb, color: C.green, label: "Therapeutic 2.1%" }])],
-    [0, 36], true);
+    [0, 16], true);
 
   cDbs = make("c-dbs", [serie("DBS mA", C.green, { width: 2 })], "mA",
     [vLinePlugin()], [0, refs.maxMa * 1.05], false);
