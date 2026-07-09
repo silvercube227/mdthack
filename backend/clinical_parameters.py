@@ -66,9 +66,11 @@ MAX_HISTORY_SECONDS = 30
 TICKS_PER_FRAME = 48
 BASELINE_CALIBRATION_SEC = 5.0
 
-# TEED simplification: proportional to I^2 * dt (ADAPT-PD uses TEED as energy endpoint)
+# DBS pulse train (typical Percept programming: 130 Hz, 60 µs)
 PULSE_WIDTH_US = 60.0
 STIM_FREQUENCY_HZ = 130.0
+STIM_FREQUENCY_MIN_HZ = 60.0
+STIM_FREQUENCY_MAX_HZ = 185.0
 
 
 class DopaminergicState(str, Enum):

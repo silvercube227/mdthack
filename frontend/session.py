@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import deque
+
 import streamlit as st
 
 from backend.clinical_parameters import (
@@ -14,7 +16,11 @@ from backend.clinical_parameters import (
     LB_POWER_OFF_PCT,
     LB_POWER_THERAPEUTIC_PCT,
     LOWER_STIM_MA,
+    MAX_HISTORY_SECONDS,
     SAMPLE_RATE_HZ,
+    STIM_FREQUENCY_HZ,
+    STIM_FREQUENCY_MAX_HZ,
+    STIM_FREQUENCY_MIN_HZ,
     UPPER_STIM_MA,
 )
 from backend.constants import DBSControlMode
@@ -31,6 +37,7 @@ def _init_control_defaults() -> None:
         "lfp_lower_threshold_pct": 2.5,
         "lower_stim_ma": LOWER_STIM_MA,
         "upper_stim_ma": UPPER_STIM_MA,
+        "stim_frequency_hz": STIM_FREQUENCY_HZ,
         "dopaminergic_state_label": DopaminergicState.OFF.value,
         "symptom_severity_scale": 1.0,
         "intervention_start_time_sec": None,
@@ -41,9 +48,20 @@ def _init_control_defaults() -> None:
         st.session_state.setdefault(key, value)
 
 
+def _migrate_runner(runner: SimulationRunner) -> None:
+    """Back-fill history keys when a live session predates a schema change."""
+    hist = runner.history
+    if "dbs_frequency_hz" not in hist:
+        max_samples = int(MAX_HISTORY_SECONDS * SAMPLE_RATE_HZ)
+        n = len(hist.get("time_sec", []))
+        hist["dbs_frequency_hz"] = deque([STIM_FREQUENCY_HZ] * n, maxlen=max_samples)
+
+
 def get_runner() -> SimulationRunner:
     if "simulation_runner" not in st.session_state:
         st.session_state.simulation_runner = SimulationRunner()
+    else:
+        _migrate_runner(st.session_state.simulation_runner)
     return st.session_state.simulation_runner
 
 
@@ -95,6 +113,7 @@ def get_controller_limits() -> ControllerLimits:
         lfp_threshold_pct=st.session_state.lfp_threshold_pct,
         lfp_upper_threshold_pct=st.session_state.lfp_upper_threshold_pct,
         lfp_lower_threshold_pct=st.session_state.lfp_lower_threshold_pct,
+        stim_frequency_hz=st.session_state.stim_frequency_hz,
     )
 
 
@@ -216,6 +235,15 @@ def render_sidebar() -> tuple:
             max_value=3.5,
             step=0.1,
             key="upper_stim_ma",
+        )
+        st.slider(
+            "Stimulation Frequency (Hz)",
+            min_value=float(STIM_FREQUENCY_MIN_HZ),
+            max_value=float(STIM_FREQUENCY_MAX_HZ),
+            step=5.0,
+            key="stim_frequency_hz",
+            help="DBS pulse-train frequency (typical Percept: 130 Hz). "
+            "Scales total energy delivered; controller adjusts amplitude only.",
         )
 
         st.divider()

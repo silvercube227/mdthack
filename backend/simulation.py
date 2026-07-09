@@ -120,6 +120,7 @@ class SimulationRunner:
             "high_beta_power": deque(maxlen=max_samples),
             "low_beta_burst_duration_ms": deque(maxlen=max_samples),
             "dbs_amplitude_ma": deque(maxlen=max_samples),
+            "dbs_frequency_hz": deque(maxlen=max_samples),
             "beta_detection_threshold": deque(maxlen=max_samples),
         }
 
@@ -186,7 +187,9 @@ class SimulationRunner:
         burst_ms = _display_burst_duration_ms(arm.brain, arm.extractor)
 
         arm.cumulative_patient_symptom_burden += self._symptom_increment(burst_ms, lb_power_pct, dt_sec)
-        arm.cumulative_teed += compute_teed_increment(dbs_amplitude, dt_sec)
+        arm.cumulative_teed += compute_teed_increment(
+            dbs_amplitude, dt_sec, limits.stim_frequency_hz
+        )
         arm.prior_dbs_amplitude_ma = dbs_amplitude
 
     def advance(
@@ -225,6 +228,7 @@ class SimulationRunner:
             burst_ms = _display_burst_duration_ms(self.main_brain, self.main_extractor)
             self.history["low_beta_burst_duration_ms"].append(burst_ms)
             self.history["dbs_amplitude_ma"].append(dbs_amplitude_ma)
+            self.history["dbs_frequency_hz"].append(limits.stim_frequency_hz)
             self.history["beta_detection_threshold"].append(limits.lfp_threshold_pct)
 
             self.prior_dbs_amplitude_ma = dbs_amplitude_ma
