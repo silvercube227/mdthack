@@ -47,6 +47,20 @@ def _kpi_row(hist: dict, t: list) -> None:
     c5.markdown(_kpi_tile("Elapsed", f"{t[-1]:.1f} s"), unsafe_allow_html=True)
 
 
+def _push_ble_amplitude(dbs_amplitude_ma: float) -> None:
+    """Forward the live DBS amplitude (mA, the same value shown in the KPI card)
+    to the BLE stimulator link, if a client has been connected via the sidebar's
+    "Connect Bluetooth Device" button. Scaling to the BLE uint8 payload happens
+    centrally in fw/ble_dbs_host.py (`ma_to_uint8`)."""
+    if not st.session_state.get("bt_device_connected"):
+        return
+    try:
+        from fw.ble_dbs_host import update_amplitude
+    except ImportError:
+        return
+    update_amplitude(dbs_amplitude_ma)
+
+
 def _outcome_row(runner, intervention_time_sec) -> None:
     closed = runner.comparison_arms["Closed-Loop DBS"]
     no_dbs = runner.comparison_arms["No DBS"]
@@ -95,6 +109,7 @@ def live_metrics(control_mode, limits, dopaminergic_state, symptom_severity_scal
 
     _kpi_row(hist, t)
     _outcome_row(runner, intervention_time_sec)
+    _push_ble_amplitude(hist["dbs_amplitude_ma"][-1])
     write_live_payload(hist, runner.comparison_history, intervention_time_sec)
 
 

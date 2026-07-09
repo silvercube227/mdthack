@@ -130,20 +130,32 @@ def _apply_pending_therapy_recommendation() -> None:
 
 
 def _render_device_connection() -> None:
-    """Placeholder Bluetooth pairing UI — not wired to any hardware yet."""
+    """BLE stimulator link controls: starts/stops the GATT server host that the
+    Arduino Nano ESP32 (BLE central) connects to (see fw/ble_dbs_host.py)."""
     st.session_state.setdefault("bt_device_connected", False)
     connected = st.session_state["bt_device_connected"]
 
     with st.container(border=True):
         st.markdown("**Device Connection**")
         if connected:
-            st.success("Percept\u2122 PC · Simulated")
+            st.success("BLE advertising · waiting for Nano ESP32")
         else:
-            st.caption("No implant paired · running in simulation mode")
-        if st.button("Connect Bluetooth Device", use_container_width=True, key="bt_connect_btn"):
-            st.toast(
-                "Bluetooth pairing isn't implemented in this build — placeholder for future hardware integration.",
-            )
+            st.caption("No stimulator paired · BLE host stopped")
+
+        label = "Disconnect Bluetooth Device" if connected else "Connect Bluetooth Device"
+        if st.button(label, use_container_width=True, key="bt_connect_btn"):
+            from fw.ble_dbs_host import start_ble_host, stop_ble_host
+
+            if connected:
+                stop_ble_host()
+                st.session_state["bt_device_connected"] = False
+                st.toast("BLE host stopped.")
+            elif start_ble_host():
+                st.session_state["bt_device_connected"] = True
+                st.toast("BLE host advertising — waiting for Nano ESP32 to connect.")
+            else:
+                st.toast("Failed to start BLE host — check logs.", icon="\u26a0\ufe0f")
+            st.rerun()
 
 
 def render_sidebar() -> tuple:

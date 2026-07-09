@@ -1,3 +1,4 @@
 streamlit>=1.33.0
 numpy>=1.24.0
 scipy>=1.10.0
+bless>=0.2.6  # Cross-platform BLE GATT server (peripheral) used by fw/ble_dbs_host.py

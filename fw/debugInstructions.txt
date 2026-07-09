@@ -1,0 +1,170 @@
+﻿You have full access to this repository and can inspect, edit, and debug code.
+
+Task:
+Fix the existing Python BLE host script and Arduino Nano ESP32 sketch so they actually work together end-to-end for the hardware demo.
+
+Do not give me a high-level plan first.
+Do not just describe the architecture.
+Directly inspect the existing files, correct them in place, and make the code runnable.
+If needed, also update any nearby integration code that calls these scripts.
+
+Primary goal:
+The frontend/dashboard already shows a real-time DBS amplitude value.
+I need the Arduino Nano ESP32 to receive the same effective stimulation output over BLE and drive an external LED brightness in real time so the LED visually matches the dashboard behavior as closely as possible.
+When BLE is disconnected or not established, the LED must turn off immediately.
+When advertising resumes, the Nano should reconnect automatically and resume updates.
+
+Existing design constraints to preserve if possible:
+- Streamlit frontend
+- backend simulation/controller produces real-time DBS amplitude values
+- frontend has or will have a “Connect Bluetooth” button
+- when clicked, the Python BLE host should start advertising
+- Python side should expose:
+  - `start_ble_host()`
+  - `update_amplitude(value: float)`
+  - `stop_ble_host()`
+- Arduino Nano ESP32 acts as the DBS stimulator hardware client
+- BLE payload format should be a single `uint8` value from 0 to 255
+- external LED brightness reflects stimulation intensity
+- LED off when disconnected
+- Arduino reconnects automatically
+
+What I want you to do
+
+1. Inspect the current Python BLE host file and Arduino sketch
+- Identify compile/runtime/API problems
+- Fix them directly
+- Keep the design as close as possible to the current intention, unless a library/API choice is invalid for the target platform or board
+
+2. Validate BLE library correctness instead of assuming it
+For the Python script:
+- Verify whether the current BLE peripheral/server library and API calls are actually valid for this environment/OS
+- If the current library is wrong or not viable, replace it with a working BLE peripheral/server approach
+- Keep the same public Python API:
+  - `start_ble_host()`
+  - `update_amplitude(value: float)`
+  - `stop_ble_host()`
+
+For the Arduino sketch:
+- Verify whether the current BLE library is appropriate for Arduino Nano ESP32
+- If not, switch to the correct ESP32-compatible BLE client library and implement against that library properly
+- Make sure the code compiles for Nano ESP32
+
+3. Make the two sides truly interoperable
+- Use the same BLE service UUID and characteristic UUID in both files
+- Do not use adopted SIG-style UUID placeholders as fake custom UUIDs
+- Replace them with actual random 128-bit custom UUIDs and use the same values on both sides
+- Use exactly one-byte payload format:
+  - unsigned 8-bit integer
+  - 0 = LED off
+  - 255 = max intensity
+- Ensure notification/subscription behavior actually works
+
+4. Make the LED match the dashboard’s displayed stimulation value
+This is important:
+- Find the exact final value in the codebase that drives the dashboard’s DBS amplitude metric/chart
+- Do not use an earlier raw value if the dashboard uses a later corrected/clamped/post-processed value
+- Create one clear mapping from that final amplitude value to `uint8` 0..255
+- If the dashboard value is in mA, identify the proper max/reference amplitude from the project and map consistently
+- Keep the scaling logic centralized and documented
+- Ensure `update_amplitude(value: float)` accepts the real project amplitude input and converts it correctly to the BLE byte value
+- If the project already has a normalized 0..1 or 0..255 value, use that instead of inventing a second scaling path
+
+5. Fix real-time behavior
+For Python:
+- The BLE host should advertise when started
+- It should keep advertising or return to advertising when disconnected, depending on the library behavior
+- It should send notifications when the value changes
+- It may also send periodic heartbeat notifications if that improves reliability
+- Make the code thread-safe if Streamlit calls it from UI flow
+
+For Arduino:
+- The main loop must be non-blocking
+- Remove long blocking delays
+- Ensure BLE events are processed frequently enough for smooth real-time LED changes
+- On disconnect, LED must go to 0 immediately
+- Then resume scanning/reconnect automatically
+
+6. Fix obvious code quality and correctness issues
+Examples of issues to check for and fix:
+- invalid or invented BLE API calls
+- wrong assumptions about cross-platform BLE peripheral support
+- compile errors caused by `String` vs `const char*`
+- missing function prototypes
+- incorrect callback signatures
+- incorrect PWM setup for Nano ESP32
+- notification subscription not actually registered
+- characteristic/service discovery problems
+- stale connection state handling
+- thread shutdown issues
+- queue handling issues
+- invalid comments claiming unsupported portability
+
+7. Verify integration points with the app
+- Search the repo for where the dashboard’s DBS amplitude metric and charts are computed
+- Search for the best location to call `start_ble_host()`, `update_amplitude(...)`, and `stop_ble_host()`
+- If helpful, patch the relevant integration point or add a minimal example snippet in comments
+- Do not break the current Streamlit app structure
+
+8. Add practical logging/debugging
+Python logs should clearly report:
+- BLE host starting
+- advertising started
+- client connected
+- client disconnected
+- value updated
+- notification sent
+- host stopped
+- any BLE errors
+
+Arduino serial logs should clearly report:
+- boot
+- scanning
+- target peripheral found
+- connecting
+- connected
+- service discovered
+- characteristic discovered
+- subscribed
+- notification received
+- PWM updated
+- disconnected
+- scanning resumed
+
+9. Validate your fixes
+After editing:
+- run any available Python checks/tests
+- if possible, validate imports and syntax
+- if possible, compile-check the Arduino sketch or at least ensure the chosen APIs match the selected library
+- if you cannot fully run hardware validation, still eliminate obvious compile/runtime issues and leave a concise note of what remains to test on-device
+
+Files to update
+- the existing Python BLE host file
+- the existing Arduino Nano ESP32 sketch
+- optionally any adjacent integration file(s) if needed for Streamlit hookup
+
+Required deliverables
+1. Update the files in place
+2. Then give me a concise summary with:
+- what was broken
+- what you changed
+- which BLE libraries you chose and why
+- the final UUIDs used
+- where the dashboard amplitude value is sourced from
+- the exact mapping from dashboard amplitude to `uint8`
+- any remaining platform-specific caveats
+- a short manual hardware test procedure
+
+Important constraints
+- Prefer minimal necessary changes, not a total rewrite, unless the current library choice is fundamentally wrong
+- Keep the public Python API intact
+- Keep the BLE payload as one byte
+- Make the implementation practical for a hackathon demo, not academically perfect
+- Prioritize reliability and end-to-end operability
+
+If the current Python-as-peripheral / Arduino-as-client architecture is not realistically supportable on this machine/OS with the available libraries, do not silently fake it.
+Instead:
+- explain that clearly
+- propose the smallest viable architecture adjustment
+- implement that adjustment only if necessary
+- keep the external behavior the same from the Streamlit user’s perspective as much as possible
