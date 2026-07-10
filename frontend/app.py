@@ -31,26 +31,20 @@ def _kpi_row(hist: dict, t: list) -> None:
     burst = hist["low_beta_burst_duration_ms"][-1]
     dbs = hist["dbs_amplitude_ma"][-1]
 
-    lb_d = lb - 2.11
-    burst_d = burst - 359
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.markdown(
-        _kpi_tile("Low-Beta Power", f"{lb:.2f}%", f"{lb_d:+.2f} vs target", "up" if lb_d > 0 else "down"),
-        unsafe_allow_html=True,
+    tiles = (
+        _kpi_tile("Low-Beta Power", f"{lb:.2f}%")
+        + _kpi_tile("High-Beta Power", f"{hb:.2f}%")
+        + _kpi_tile("Burst Duration", f"{burst:.0f} ms")
+        + _kpi_tile("DBS Amplitude", f"{dbs:.2f} mA")
+        + _kpi_tile("Elapsed", f"{t[-1]:.1f} s")
     )
-    c2.markdown(_kpi_tile("High-Beta Power", f"{hb:.2f}%"), unsafe_allow_html=True)
-    c3.markdown(
-        _kpi_tile("Burst Duration", f"{burst:.0f} ms", f"{burst_d:+.0f} vs ON", "up" if burst_d > 0 else "down"),
-        unsafe_allow_html=True,
-    )
-    c4.markdown(_kpi_tile("DBS Amplitude", f"{dbs:.2f} mA"), unsafe_allow_html=True)
-    c5.markdown(_kpi_tile("Elapsed", f"{t[-1]:.1f} s"), unsafe_allow_html=True)
+    st.markdown(f'<div class="mdt-kpi-row">{tiles}</div>', unsafe_allow_html=True)
 
 
 def _push_ble_amplitude(dbs_amplitude_ma: float) -> None:
     """Forward the live DBS amplitude (mA, the same value shown in the KPI card)
     to the BLE stimulator link, if a client has been connected via the sidebar's
-    "Connect Bluetooth Device" button. Scaling to the BLE uint8 payload happens
+    "Connect INS Device " button. Scaling to the BLE uint8 payload happens
     centrally in fw/ble_dbs_host.py (`ma_to_uint8`)."""
     if not st.session_state.get("bt_device_connected"):
         return
@@ -107,8 +101,9 @@ def live_metrics(control_mode, limits, dopaminergic_state, symptom_severity_scal
         st.info("Initializing closed-loop neuromodulation simulation…")
         return
 
-    _kpi_row(hist, t)
-    _outcome_row(runner, intervention_time_sec)
+    with st.container(border=True):
+        _kpi_row(hist, t)
+        _outcome_row(runner, intervention_time_sec)
     _push_ble_amplitude(hist["dbs_amplitude_ma"][-1])
     write_live_payload(hist, runner.comparison_history, intervention_time_sec)
 
@@ -132,7 +127,7 @@ def main() -> None:
         page_title="Medtronic Closed-Loop DBS Simulator",
         page_icon=None,
         layout="wide",
-        initial_sidebar_state="expanded",
+        initial_sidebar_state="locked",
     )
     inject_theme()
     get_runner()
@@ -144,7 +139,6 @@ def main() -> None:
         symptom_severity_scale,
         paused,
     ) = render_sidebar()
-
 
     render_therapy_recommendation_panel()
 

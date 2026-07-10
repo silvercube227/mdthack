@@ -6,17 +6,22 @@ import streamlit as st
 
 # --- Medtronic brand palette --------------------------------------------------
 NAVY = "#170F5F"
-COBALT = "#0077C8"
-COBALT_DK = "#005FA0"
-SKY = "#4AA3DB"
+NAVY_DK = "#0E0840"
+COBALT = NAVY
+COBALT_DK = NAVY_DK
+SKY = "#2A3A7A"
 
 INK = "#1B1B2F"
 SLATE = "#4A5261"
 MUTED = "#5F6876"
-BORDER = "#E1E6EF"
-GRID = "#EDF0F6"
+BORDER = "#D8DCE8"
+GRID = "#E8EBF4"
 SURFACE = "#FFFFFF"
-CANVAS = "#F4F6FB"
+# A soft, faintly blue-tinted white — reads as "clean" rather than grey, and is
+# used verbatim (same hex) for the app background AND the chart iframe so the
+# two never appear as mismatched panels.
+CANVAS = "#EEF1FB"
+CANVAS_SOLID = CANVAS
 
 GREEN = "#00843D"
 RED = "#C8102E"
@@ -41,7 +46,14 @@ def inject_theme() -> None:
         }}
 
         html, body, [class*="css"] {{ font-family: {FONT_STACK}; }}
-        .stApp {{ background: {CANVAS}; color: {INK}; }}
+        .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"] {{
+            background: {CANVAS} !important;
+            color: {INK};
+        }}
+        /* The chart iframe is a separate document (see live_charts.py) that paints
+           the identical {CANVAS} hex — keep the host element unpainted so no
+           white flash/mismatch shows before it loads. */
+        iframe {{ background: {CANVAS} !important; }}
 
         /* Readable text everywhere (inheritance-safe: no div/span/* so branded tiles keep colors) */
         .stApp p, .stApp li, .stApp label, .stApp td, .stApp th,
@@ -57,30 +69,11 @@ def inject_theme() -> None:
             padding-top: 1.4rem; padding-bottom: 3rem; max-width: 1360px;
         }}
 
-        /* ---- Brand header ---- */
-        .mdt-header {{
-            display: flex; align-items: center; gap: 0.9rem;
-            background: {SURFACE}; border: 1px solid {BORDER}; border-left: 5px solid {COBALT};
-            border-radius: 14px; padding: 1rem 1.35rem; margin-bottom: 1.1rem;
-            box-shadow: 0 2px 10px rgba(23,15,95,0.05);
-        }}
-        .mdt-mark {{
-            width: 38px; height: 38px; border-radius: 10px; flex: none;
-            background: linear-gradient(135deg, {NAVY} 0%, {COBALT} 100%);
-            display: flex; align-items: center; justify-content: center;
-            color: #fff; font-weight: 700; font-size: 1.2rem;
-        }}
-        .mdt-eyebrow {{
-            color: {COBALT}; font-size: 0.66rem; font-weight: 700;
-            letter-spacing: 0.14em; text-transform: uppercase;
-        }}
-        .mdt-title {{ color: {NAVY}; font-size: 1.3rem; font-weight: 700; line-height: 1.15; }}
-        .mdt-sub {{ color: {SLATE}; font-size: 0.83rem; margin-top: 1px; }}
-
         /* ---- Section label ---- */
         .mdt-section {{
             display: flex; align-items: center; gap: 0.55rem;
-            color: {NAVY}; font-size: 1rem; font-weight: 600; margin: 0.5rem 0 0.5rem 0;
+            color: {NAVY}; font-size: 1rem; font-weight: 600; margin: 1.3rem 0 0.6rem 0;
+            text-transform: uppercase; letter-spacing: 0.03em;
         }}
         .mdt-section::before {{ content: ""; width: 4px; height: 15px; border-radius: 2px; background: {COBALT}; }}
 
@@ -89,12 +82,30 @@ def inject_theme() -> None:
             background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 12px;
             padding: 0.65rem 0.8rem; height: 100%; box-shadow: 0 1px 3px rgba(23,15,95,0.04);
         }}
-        .mdt-kpi-k {{ color: {SLATE}; font-size: 0.74rem; font-weight: 600; line-height: 1.15; }}
+        .mdt-kpi-k {{
+            color: {SLATE}; font-size: 0.7rem; font-weight: 600; line-height: 1.15;
+            text-transform: uppercase; letter-spacing: 0.04em;
+        }}
         .mdt-kpi-v {{ color: {NAVY}; font-size: 1.5rem; font-weight: 700; line-height: 1.25; white-space: nowrap; }}
         .mdt-kpi-d {{ font-size: 0.72rem; font-weight: 600; margin-top: 1px; white-space: nowrap; }}
         .mdt-kpi-d.up {{ color: {RED}; }}
         .mdt-kpi-d.down {{ color: {GREEN}; }}
         .mdt-kpi-d.flat {{ color: {MUTED}; }}
+
+        /* ---- KPI row (single line) ---- */
+        .mdt-kpi-row {{
+            display: flex;
+            flex-wrap: nowrap;
+            gap: 0.5rem;
+            width: 100%;
+            margin-bottom: 0.5rem;
+        }}
+        .mdt-kpi-row .mdt-kpi {{
+            flex: 1 1 0;
+            min-width: 0;
+            padding: 0.55rem 0.65rem;
+        }}
+        .mdt-kpi-row .mdt-kpi-v {{ font-size: 1.25rem; }}
 
         /* ---- Parameter tiles (therapy panel) ---- */
         .mdt-param {{
@@ -106,25 +117,74 @@ def inject_theme() -> None:
         .mdt-param-v {{ color: {NAVY}; font-size: 1.05rem; font-weight: 700; line-height: 1.2; }}
 
         /* ---- Buttons ---- */
+        .stButton > button,
+        .stButton > button p,
+        .stButton > button span,
+        .stButton > button div {{
+            color: #ffffff !important;
+        }}
         .stButton > button {{
-            background: {COBALT}; color: #fff; border: none; border-radius: 9px;
+            background: {COBALT}; color: #ffffff !important; border: none; border-radius: 9px;
             font-weight: 600; padding: 0.5rem 1rem; transition: background 0.15s ease;
         }}
-        .stButton > button:hover {{ background: {COBALT_DK}; color: #fff; }}
-        .stButton > button:focus {{ box-shadow: 0 0 0 3px rgba(0,119,200,0.25); color: #fff; }}
+        .stButton > button:hover,
+        .stButton > button:hover p,
+        .stButton > button:hover span,
+        .stButton > button:hover div {{
+            background: {COBALT_DK}; color: #ffffff !important;
+        }}
+        .stButton > button:focus,
+        .stButton > button:focus p,
+        .stButton > button:focus span,
+        .stButton > button:focus div {{
+            box-shadow: 0 0 0 3px rgba(23,15,95,0.22); color: #ffffff !important;
+        }}
+        .stButton > button:active,
+        .stButton > button:active p,
+        .stButton > button:active span,
+        .stButton > button:active div {{
+            color: #ffffff !important;
+        }}
+        [data-testid="stBaseButton-primary"],
+        [data-testid="stBaseButton-primary"] p,
+        [data-testid="stBaseButton-primary"] span {{
+            color: #ffffff !important;
+        }}
 
         /* ---- Sidebar ---- */
         [data-testid="stSidebar"] {{ background: {SURFACE}; border-right: 1px solid {BORDER}; }}
-        [data-testid="stSidebar"] .stButton > button {{ background: {CANVAS}; color: {NAVY}; border: 1px solid {BORDER}; }}
-        [data-testid="stSidebar"] .stButton > button:hover {{ background: {COBALT}; color: #fff; border-color: {COBALT}; }}
+        [data-testid="stSidebar"] h3 {{
+            font-size: 1.4rem !important;
+            font-weight: 700 !important;
+            color: {NAVY} !important;
+        }}
+        [data-testid="stSidebar"] h4 {{
+            font-size: 1.12rem !important;
+            font-weight: 600 !important;
+            color: {NAVY} !important;
+        }}
+        [data-testid="stSidebar"] .stButton > button {{ background: {CANVAS_SOLID}; color: {NAVY} !important; border: 1px solid {BORDER}; }}
+        [data-testid="stSidebar"] .stButton > button p,
+        [data-testid="stSidebar"] .stButton > button span,
+        [data-testid="stSidebar"] .stButton > button div {{ color: {NAVY} !important; }}
+        [data-testid="stSidebar"] .stButton > button:hover,
+        [data-testid="stSidebar"] .stButton > button:hover p,
+        [data-testid="stSidebar"] .stButton > button:hover span,
+        [data-testid="stSidebar"] .stButton > button:hover div {{
+            background: {COBALT}; color: #ffffff !important; border-color: {COBALT};
+        }}
 
         /* ---- Bordered containers, tabs, expander ---- */
-        [data-testid="stVerticalBlockBorderWrapper"] {{ border-radius: 12px; border-color: {BORDER}; }}
+        [data-testid="stVerticalBlockBorderWrapper"] {{
+            border-radius: 12px; border-color: {BORDER}; background: {SURFACE};
+            box-shadow: 0 1px 3px rgba(23,15,95,0.04);
+        }}
         .stTabs [data-baseweb="tab-list"] {{ gap: 0.4rem; border-bottom: 1px solid {BORDER}; }}
         .stTabs [data-baseweb="tab"] {{ color: {SLATE}; font-weight: 500; }}
         .stTabs [aria-selected="true"] {{ color: {NAVY}; }}
         [data-testid="stExpander"] {{ border-radius: 12px; border-color: {BORDER}; }}
         iframe {{ border: none !important; }}
+        hr {{ border-color: {BORDER}; }}
 
         /* ---- Form controls forced light (dropdowns render in body-level portals) ---- */
         input, textarea, select,
@@ -141,7 +201,7 @@ def inject_theme() -> None:
         }}
         [role="option"]:hover, li[role="option"]:hover,
         [role="option"][aria-selected="true"], li[role="option"][aria-selected="true"] {{
-            background-color: {CANVAS} !important; color: {NAVY} !important;
+            background-color: {CANVAS_SOLID} !important; color: {NAVY} !important;
         }}
         [data-baseweb="tooltip"], [role="tooltip"] {{ background-color: {NAVY} !important; color: #fff !important; }}
         [data-testid="stTooltipContent"] {{

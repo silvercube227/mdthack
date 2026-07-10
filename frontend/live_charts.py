@@ -28,13 +28,16 @@ _HTML = r"""
 <style>
   :root { color-scheme: light only; }
   * { box-sizing: border-box; }
-  html, body { margin: 0; background: #F4F6FB; color: #1B1B2F;
+  /* Must match frontend/theme.py CANVAS exactly so the chart area never reads
+     as a mismatched panel against the rest of the page. */
+  html, body { margin: 0; background: #EEF1FB; color: #1B1B2F;
                font-family: Inter, 'Segoe UI', Roboto, sans-serif; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 1px; }
   .card { background: #FFFFFF; border: 1px solid #E1E6EF; border-radius: 12px;
           padding: 10px 12px 6px; box-shadow: 0 1px 3px rgba(23,15,95,0.04); }
   .card.wide { grid-column: 1 / -1; }
-  .card h3 { margin: 0 0 6px 0; font-size: 13px; font-weight: 600; color: #170F5F; }
+  .card h3 { margin: 0 0 6px 0; font-size: 11.5px; font-weight: 700; color: #170F5F;
+             text-transform: uppercase; letter-spacing: 0.03em; }
   .chart { width: 100%; }
   .u-legend { font-size: 11px; color: #4A5261; }
   .u-legend .u-marker { width: 10px; height: 10px; }
@@ -54,7 +57,7 @@ _HTML = r"""
 const DATA_URL = "__DATA_URL__";
 const WINDOW = __WINDOW__;
 const C = {
-  cobalt:"#0077C8", red:"#C8102E", purple:"#6B4EFF", amber:"#E8A33D",
+  cobalt:"#170F5F", red:"#C8102E", purple:"#6B4EFF", amber:"#E8A33D",
   green:"#00843D", gray:"#9AA5B4", muted:"#5F6876", slate:"#4A5261",
   grid:"#EDF0F6", border:"#E1E6EF", ink:"#1B1B2F",
 };

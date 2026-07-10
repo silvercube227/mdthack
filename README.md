@@ -234,7 +234,7 @@ dashboard runs fully without any hardware connected.
    limits and the *Energy saved vs Fixed DBS* card climb.
 4. **Toggle Dopaminergic ON** — burst durations shorten toward ~359 ms.
 5. **Click Apply Recommended Therapy Parameters** — show automated calibration.
-6. *(Optional)* **Connect Bluetooth Device** — the Arduino LED now tracks the
+6. *(Optional)* **Connect INS Device ** — the Arduino LED now tracks the
    live amplitude.
 
 ---

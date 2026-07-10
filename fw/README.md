@@ -36,7 +36,7 @@ Ctrl+C to stop. If you see `bless not available`, re-run the `pip install`
 above.
 
 Then run the full app as usual (`streamlit run app.py`) and use the
-**Connect Bluetooth Device** button in the sidebar — this is already wired to
+**Connect INS Device ** button in the sidebar — this is already wired to
 `start_ble_host()` / `stop_ble_host()`, and the live DBS amplitude (mA) is
 pushed automatically every simulation tick via `update_amplitude()`.
 
@@ -55,7 +55,7 @@ pushed automatically every simulation tick via `update_amplitude()`.
 
 1. Power the Nano ESP32 (USB or battery) — Serial Monitor should show
    `Boot` → `Starting BLE scan for DBS Host service...`.
-2. In the Streamlit sidebar, click **Connect Bluetooth Device**.
+2. In the Streamlit sidebar, click **Connect INS Device **.
    - Python log: `Advertising started as 'DBS-Host'`.
 3. Within a few seconds the Nano should log:
    `Target peripheral found` → `Connected to BLE DBS Host and subscribed to
@@ -64,7 +64,7 @@ pushed automatically every simulation tick via `update_amplitude()`.
    simulated amplitude — the LED brightness should track the **DBS
    Amplitude** KPI card in real time (0 mA → LED off, `MAX_STIM_MA` (3.5 mA)
    → full brightness).
-5. Click **Disconnect Bluetooth Device** (or quit the Streamlit process) —
+5. Click **Disconnect INS Device ** (or quit the Streamlit process) —
    the LED must go dark immediately and the Nano should resume scanning.
 6. Click **Connect** again — the Nano should reconnect automatically without
    needing a re-upload or reset.

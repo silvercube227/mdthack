@@ -161,7 +161,7 @@ def _render_device_connection() -> None:
         else:
             st.caption("No stimulator paired · BLE host stopped")
 
-        label = "Disconnect Bluetooth Device" if connected else "Connect Bluetooth Device"
+        label = "Disconnect INS Device " if connected else "Connect INS Device "
         if st.button(label, use_container_width=True, key="bt_connect_btn"):
             from fw.ble_dbs_host import start_ble_host, stop_ble_host
 
